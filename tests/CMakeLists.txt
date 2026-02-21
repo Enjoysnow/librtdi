@@ -1,11 +1,4 @@
-include(FetchContent)
-
-FetchContent_Declare(
-    Catch2
-    GIT_REPOSITORY https://github.com/catchorg/Catch2.git
-    GIT_TAG        v3.5.2
-)
-FetchContent_MakeAvailable(Catch2)
+include(${PROJECT_SOURCE_DIR}/cmake/Dependencies.cmake)
 
 list(APPEND CMAKE_MODULE_PATH ${catch2_SOURCE_DIR}/extras)
 include(Catch)
@@ -29,5 +22,13 @@ set(TEST_SOURCES
 
 add_executable(librtdi_tests ${TEST_SOURCES})
 target_link_libraries(librtdi_tests PRIVATE librtdi Catch2::Catch2WithMain)
+
+if(LIBRTDI_ENABLE_WARNINGS)
+    librtdi_apply_warnings(librtdi_tests)
+endif()
+
+if(LIBRTDI_ENABLE_SANITIZERS)
+    librtdi_apply_sanitizers(librtdi_tests)
+endif()
 
 catch_discover_tests(librtdi_tests)

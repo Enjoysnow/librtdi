@@ -185,7 +185,7 @@ registry& registry::register_component(
     }
 
     auto action = apply_policy(impl_->descriptors, impl_->single_locked, type, key, policy);
-    if (action == policy_action::skip || action == policy_action::lock_only_upgrade) {
+    if (action == policy_action_kind::skip || action == policy_action_kind::lock_only_upgrade) {
         return *this;
     }
 

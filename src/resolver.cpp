@@ -7,7 +7,6 @@
 #include <unordered_map>
 #include <vector>
 #include <typeindex>
-#include <algorithm>
 #include <string>
 #include <utility>
 
@@ -72,8 +71,8 @@ struct resolver::scoped_cache {
 // Constructors / Destructor
 // ---------------------------------------------------------------
 
-resolver::resolver(std::unique_ptr<impl> impl)
-    : impl_(std::move(impl))
+resolver::resolver(std::unique_ptr<impl> p_impl)
+    : impl_(std::move(p_impl))
     , is_scoped_(false)
     , scoped_cache_(nullptr)
 {}

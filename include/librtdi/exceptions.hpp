@@ -9,9 +9,6 @@
 
 namespace librtdi {
 
-// forward declare demangle utility (defined in exceptions.cpp)
-std::string demangle(std::type_index type);
-
 class di_error : public std::runtime_error {
 public:
     explicit di_error(const std::string& message,

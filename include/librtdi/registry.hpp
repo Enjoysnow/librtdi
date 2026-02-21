@@ -3,6 +3,7 @@
 #include "descriptor.hpp"
 #include "resolver.hpp"
 #include "exceptions.hpp"
+#include "type_traits.hpp"
 
 #include <cstddef>
 #include <memory>
@@ -59,6 +60,8 @@ public:
     // ---------------------------------------------------------------
 
     template <typename TInterface, typename TImpl, typename... Deps>
+        requires derived_from_base<TImpl, TInterface>
+              && constructible_from_shared_ptrs<TImpl, Deps...>
     registry& add_singleton(deps_tag<Deps...> /*tag*/,
                             registration_policy policy = registration_policy::multiple) {
         static_assert(std::is_base_of_v<TInterface, TImpl>,
@@ -76,6 +79,8 @@ public:
     }
 
     template <typename TInterface, typename TImpl, typename... Deps>
+        requires derived_from_base<TImpl, TInterface>
+              && constructible_from_shared_ptrs<TImpl, Deps...>
     registry& add_scoped(deps_tag<Deps...> /*tag*/,
                          registration_policy policy = registration_policy::multiple) {
         static_assert(std::is_base_of_v<TInterface, TImpl>,
@@ -93,6 +98,8 @@ public:
     }
 
     template <typename TInterface, typename TImpl, typename... Deps>
+        requires derived_from_base<TImpl, TInterface>
+              && constructible_from_shared_ptrs<TImpl, Deps...>
     registry& add_transient(deps_tag<Deps...> /*tag*/,
                             registration_policy policy = registration_policy::multiple) {
         static_assert(std::is_base_of_v<TInterface, TImpl>,
@@ -114,6 +121,8 @@ public:
     // ---------------------------------------------------------------
 
     template <typename TInterface, typename TImpl>
+        requires derived_from_base<TImpl, TInterface>
+              && default_constructible<TImpl>
     registry& add_singleton(registration_policy policy = registration_policy::multiple) {
         static_assert(std::is_base_of_v<TInterface, TImpl>,
                       "TImpl must derive from TInterface");
@@ -130,6 +139,8 @@ public:
     }
 
     template <typename TInterface, typename TImpl>
+        requires derived_from_base<TImpl, TInterface>
+              && default_constructible<TImpl>
     registry& add_scoped(registration_policy policy = registration_policy::multiple) {
         static_assert(std::is_base_of_v<TInterface, TImpl>,
                       "TImpl must derive from TInterface");
@@ -145,6 +156,8 @@ public:
     }
 
     template <typename TInterface, typename TImpl>
+        requires derived_from_base<TImpl, TInterface>
+              && default_constructible<TImpl>
     registry& add_transient(registration_policy policy = registration_policy::multiple) {
         static_assert(std::is_base_of_v<TInterface, TImpl>,
                       "TImpl must derive from TInterface");
@@ -164,6 +177,8 @@ public:
     // ---------------------------------------------------------------
 
     template <typename TInterface, typename TImpl, typename... Deps>
+        requires derived_from_base<TImpl, TInterface>
+              && constructible_from_shared_ptrs<TImpl, Deps...>
     registry& add_singleton(std::string_view key, deps_tag<Deps...> /*tag*/,
                             registration_policy policy = registration_policy::multiple) {
         static_assert(std::is_base_of_v<TInterface, TImpl>,
@@ -182,6 +197,8 @@ public:
     }
 
     template <typename TInterface, typename TImpl, typename... Deps>
+        requires derived_from_base<TImpl, TInterface>
+              && constructible_from_shared_ptrs<TImpl, Deps...>
     registry& add_scoped(std::string_view key, deps_tag<Deps...> /*tag*/,
                          registration_policy policy = registration_policy::multiple) {
         static_assert(std::is_base_of_v<TInterface, TImpl>,
@@ -200,6 +217,8 @@ public:
     }
 
     template <typename TInterface, typename TImpl, typename... Deps>
+        requires derived_from_base<TImpl, TInterface>
+              && constructible_from_shared_ptrs<TImpl, Deps...>
     registry& add_transient(std::string_view key, deps_tag<Deps...> /*tag*/,
                             registration_policy policy = registration_policy::multiple) {
         static_assert(std::is_base_of_v<TInterface, TImpl>,
@@ -222,6 +241,8 @@ public:
     // ---------------------------------------------------------------
 
     template <typename TInterface, typename TImpl>
+        requires derived_from_base<TImpl, TInterface>
+              && default_constructible<TImpl>
     registry& add_singleton(std::string_view key,
                             registration_policy policy = registration_policy::multiple) {
         static_assert(std::is_base_of_v<TInterface, TImpl>,
@@ -239,6 +260,8 @@ public:
     }
 
     template <typename TInterface, typename TImpl>
+        requires derived_from_base<TImpl, TInterface>
+              && default_constructible<TImpl>
     registry& add_scoped(std::string_view key,
                          registration_policy policy = registration_policy::multiple) {
         static_assert(std::is_base_of_v<TInterface, TImpl>,
@@ -256,6 +279,8 @@ public:
     }
 
     template <typename TInterface, typename TImpl>
+        requires derived_from_base<TImpl, TInterface>
+              && default_constructible<TImpl>
     registry& add_transient(std::string_view key,
                             registration_policy policy = registration_policy::multiple) {
         static_assert(std::is_base_of_v<TInterface, TImpl>,
@@ -277,6 +302,7 @@ public:
     // ---------------------------------------------------------------
 
     template <typename TInterface, typename TTarget>
+        requires derived_from_base<TTarget, TInterface>
     registry& forward(registration_policy policy = registration_policy::multiple) {
         static_assert(std::is_base_of_v<TInterface, TTarget>,
                       "TTarget must derive from TInterface");
@@ -299,6 +325,8 @@ public:
 
     /// decorate all implementations of I with D (no extra deps).
     template <typename TInterface, typename TDecorator>
+        requires derived_from_base<TDecorator, TInterface>
+              && decorator_constructible<TDecorator, TInterface>
     registry& decorate() {
         static_assert(std::is_base_of_v<TInterface, TDecorator>,
                       "TDecorator must derive from TInterface");
@@ -318,6 +346,8 @@ public:
 
     /// decorate all implementations of I with D (with extra deps).
     template <typename TInterface, typename TDecorator, typename... Extra>
+        requires derived_from_base<TDecorator, TInterface>
+              && decorator_constructible_with_deps<TDecorator, TInterface, Extra...>
     registry& decorate(deps_tag<Extra...> /*tag*/) {
         static_assert(std::is_base_of_v<TInterface, TDecorator>,
                       "TDecorator must derive from TInterface");
@@ -338,6 +368,8 @@ public:
 
     /// decorate a specific implementation (identified by type_index) of I with D.
     template <typename TInterface, typename TDecorator>
+        requires derived_from_base<TDecorator, TInterface>
+              && decorator_constructible<TDecorator, TInterface>
     registry& decorate(std::type_index target) {
         static_assert(std::is_base_of_v<TInterface, TDecorator>,
                       "TDecorator must derive from TInterface");
@@ -357,6 +389,8 @@ public:
 
     /// decorate a specific implementation of I with D (with extra deps).
     template <typename TInterface, typename TDecorator, typename... Extra>
+        requires derived_from_base<TDecorator, TInterface>
+              && decorator_constructible_with_deps<TDecorator, TInterface, Extra...>
     registry& decorate(std::type_index target, deps_tag<Extra...> /*tag*/) {
         static_assert(std::is_base_of_v<TInterface, TDecorator>,
                       "TDecorator must derive from TInterface");
