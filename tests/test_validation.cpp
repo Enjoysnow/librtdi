@@ -1,153 +1,202 @@
 #include <catch2/catch_test_macros.hpp>
 #include <librtdi.hpp>
-#include <memory>
 
-using namespace librtdi;
+namespace {
 
-// ---------------------------------------------------------------
-// Test interfaces for validation
-// ---------------------------------------------------------------
-
-struct IValA {
-    virtual ~IValA() = default;
+struct IA {
+    virtual ~IA() = default;
 };
-struct IValB {
-    virtual ~IValB() = default;
+struct A : IA {};
+
+struct IB {
+    virtual ~IB() = default;
 };
-struct IValC {
-    virtual ~IValC() = default;
+struct B : IB {
+    explicit B(IA& /*a*/) {}
 };
 
-struct ValAImpl : IValA {
-    std::shared_ptr<IValB> b_;
-    explicit ValAImpl(std::shared_ptr<IValB> b) : b_(std::move(b)) {}
+struct IC {
+    virtual ~IC() = default;
 };
-struct ValBImpl : IValB {
-    std::shared_ptr<IValC> c_;
-    explicit ValBImpl(std::shared_ptr<IValC> c) : c_(std::move(c)) {}
-};
-struct ValCImpl : IValC {};
-
-// Cyclic
-struct ValCycA : IValA {
-    std::shared_ptr<IValB> b_;
-    explicit ValCycA(std::shared_ptr<IValB> b) : b_(std::move(b)) {}
-};
-struct ValCycB : IValB {
-    std::shared_ptr<IValA> a_;
-    explicit ValCycB(std::shared_ptr<IValA> a) : a_(std::move(a)) {}
+struct C : IC {
+    explicit C(IB& /*b*/) {}
 };
 
-// ---------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------
+// Cyclic: X depends on Y depends on X
+struct IX {
+    virtual ~IX() = default;
+};
+struct IY {
+    virtual ~IY() = default;
+};
+struct X : IX {
+    explicit X(IY& /*y*/) {}
+};
+struct Y : IY {
+    explicit Y(IX& /*x*/) {}
+};
 
-TEST_CASE("Validation: cyclic dependency throws", "[validation]") {
-    registry registry;
-    registry.add_singleton<IValA, ValCycA>(deps<IValB>);
-    registry.add_singleton<IValB, ValCycB>(deps<IValA>);
+} // namespace
 
-    REQUIRE_THROWS_AS(
-        registry.build(),
-        cyclic_dependency);
+TEST_CASE("missing dependency detected", "[validation]") {
+    librtdi::registry reg;
+    // B depends on IA but IA is not registered
+    reg.add_singleton<IB, B>(librtdi::deps<IA>);
+    REQUIRE_THROWS_AS(reg.build(), librtdi::not_found);
 }
 
-TEST_CASE("Validation: missing dependency throws", "[validation]") {
-    registry registry;
-    registry.add_singleton<IValA, ValAImpl>(deps<IValB>);
-    // IValB not registered
-
-    REQUIRE_THROWS_AS(
-        registry.build(),
-        not_found);
+TEST_CASE("all deps satisfied passes validation", "[validation]") {
+    librtdi::registry reg;
+    reg.add_singleton<IA, A>();
+    reg.add_singleton<IB, B>(librtdi::deps<IA>);
+    REQUIRE_NOTHROW(reg.build());
 }
 
-TEST_CASE("Validation: singleton depending on scoped throws", "[validation]") {
-    registry registry;
-    registry.add_scoped<IValC, ValCImpl>();
-    registry.add_singleton<IValB, ValBImpl>(deps<IValC>);
-
-    REQUIRE_THROWS_AS(
-        registry.build(),
-        lifetime_mismatch);
+TEST_CASE("cycle detected", "[validation]") {
+    librtdi::registry reg;
+    reg.add_singleton<IX, X>(librtdi::deps<IY>);
+    reg.add_singleton<IY, Y>(librtdi::deps<IX>);
+    REQUIRE_THROWS_AS(reg.build(), librtdi::cyclic_dependency);
 }
 
-TEST_CASE("Validation: singleton depending on transient throws", "[validation]") {
-    registry registry;
-    registry.add_transient<IValC, ValCImpl>();
-    registry.add_singleton<IValB, ValBImpl>(deps<IValC>);
-
-    REQUIRE_THROWS_AS(
-        registry.build(),
-        lifetime_mismatch);
-}
-
-TEST_CASE("Validation: scoped depending on singleton is OK", "[validation]") {
-    registry registry;
-    registry.add_singleton<IValC, ValCImpl>();
-    registry.add_scoped<IValB, ValBImpl>(deps<IValC>);
-
-    REQUIRE_NOTHROW(registry.build());
-}
-
-TEST_CASE("Validation: transient depending on anything is OK", "[validation]") {
-    registry registry;
-    registry.add_scoped<IValC, ValCImpl>();
-    registry.add_transient<IValB, ValBImpl>(deps<IValC>);
-
-    REQUIRE_NOTHROW(registry.build());
-}
-
-TEST_CASE("Validation: valid chain passes", "[validation]") {
-    registry registry;
-    registry.add_singleton<IValC, ValCImpl>();
-    registry.add_singleton<IValB, ValBImpl>(deps<IValC>);
-    registry.add_singleton<IValA, ValAImpl>(deps<IValB>);
-
-    REQUIRE_NOTHROW(registry.build());
-}
-
-TEST_CASE("Validation: disabled validation allows missing deps", "[validation]") {
-    registry registry;
-    registry.add_singleton<IValA, ValAImpl>(deps<IValB>);
-
-    build_options opts{.validate_on_build = false};
-    REQUIRE_NOTHROW(registry.build(opts));
-}
-
-TEST_CASE("Validation: disabled scope validation allows singleton->scoped", "[validation]") {
-    registry registry;
-    registry.add_scoped<IValC, ValCImpl>();
-    registry.add_singleton<IValB, ValBImpl>(deps<IValC>);
-
-    build_options opts{.validate_on_build = true, .validate_scopes = false};
-    REQUIRE_NOTHROW(registry.build(opts));
-}
-
-TEST_CASE("Validation: ambiguous dependency throws ambiguous_component", "[validation]") {
-    // IValC registered twice; IValB depends on IValC via deps<>
-    // build should detect that IValC has >1 non-keyed registration
-    registry registry;
-    registry.add_singleton<IValC, ValCImpl>();
-    registry.add_singleton<IValC, ValCImpl>();    // duplicate
-    registry.add_singleton<IValB, ValBImpl>(deps<IValC>);
-
-    REQUIRE_THROWS_AS(registry.build(), ambiguous_component);
-}
-
-TEST_CASE("Validation: forward target with multiple registrations passes", "[validation]") {
-    // forward expands to N descriptors. With 2 FwdImpl registrations,
-    // IFwd gets 2. No one depends on IFwd, so no ambiguity error for
-    // consumers. The expanded descriptors' deps on FwdImpl are exempt.
-    struct IFwd {
-        virtual ~IFwd() = default;
+TEST_CASE("lifetime mismatch: singleton depends on transient", "[validation]") {
+    struct ISingleton {
+        virtual ~ISingleton() = default;
     };
-    struct FwdImpl : IFwd {};
+    struct ITransient {
+        virtual ~ITransient() = default;
+    };
+    struct TransientImpl : ITransient {};
+    struct SingletonImpl : ISingleton {
+        explicit SingletonImpl(std::unique_ptr<ITransient> /*t*/) {}
+    };
 
-    registry registry;
-    registry.add_singleton<FwdImpl, FwdImpl>();
-    registry.add_singleton<FwdImpl, FwdImpl>();  // two registrations of target
-    registry.forward<IFwd, FwdImpl>();
+    librtdi::registry reg;
+    reg.add_transient<ITransient, TransientImpl>();
+    reg.add_singleton<ISingleton, SingletonImpl>(
+        librtdi::deps<librtdi::transient<ITransient>>);
+    REQUIRE_THROWS_AS(
+        reg.build({.validate_lifetimes = true}),
+        librtdi::lifetime_mismatch);
+}
 
-    REQUIRE_NOTHROW(registry.build());
+TEST_CASE("lifetime validation disabled passes", "[validation]") {
+    struct ISingleton {
+        virtual ~ISingleton() = default;
+    };
+    struct ITransient {
+        virtual ~ITransient() = default;
+    };
+    struct TransientImpl : ITransient {};
+    struct SingletonImpl : ISingleton {
+        explicit SingletonImpl(std::unique_ptr<ITransient> /*t*/) {}
+    };
+
+    librtdi::registry reg;
+    reg.add_transient<ITransient, TransientImpl>();
+    reg.add_singleton<ISingleton, SingletonImpl>(
+        librtdi::deps<librtdi::transient<ITransient>>);
+    REQUIRE_NOTHROW(reg.build({.validate_lifetimes = false}));
+}
+
+TEST_CASE("validation disabled entirely", "[validation]") {
+    librtdi::registry reg;
+    // B depends on IA which is not registered
+    reg.add_singleton<IB, B>(librtdi::deps<IA>);
+    REQUIRE_NOTHROW(reg.build({.validate_on_build = false}));
+}
+
+TEST_CASE("transient depending on singleton is ok", "[validation]") {
+    librtdi::registry reg;
+    reg.add_singleton<IA, A>();
+    reg.add_transient<IB, B>(librtdi::deps<IA>);
+    REQUIRE_NOTHROW(reg.build());
+}
+
+TEST_CASE("chain A→B→C validates", "[validation]") {
+    librtdi::registry reg;
+    reg.add_singleton<IA, A>();
+    reg.add_singleton<IB, B>(librtdi::deps<IA>);
+    reg.add_singleton<IC, C>(librtdi::deps<IB>);
+    REQUIRE_NOTHROW(reg.build());
+}
+
+// ---------------------------------------------------------------
+// detect_cycles = false allows cyclic deps to pass
+// ---------------------------------------------------------------
+
+TEST_CASE("detect_cycles disabled passes cyclic deps", "[validation]") {
+    librtdi::registry reg;
+    reg.add_singleton<IX, X>(librtdi::deps<IY>);
+    reg.add_singleton<IY, Y>(librtdi::deps<IX>);
+    REQUIRE_NOTHROW(reg.build({.validate_lifetimes = true,
+                                .detect_cycles = false}));
+}
+
+// ---------------------------------------------------------------
+// Singleton with transient collection dep is allowed (not captive)
+// ---------------------------------------------------------------
+
+TEST_CASE("singleton with transient collection dep is allowed", "[validation]") {
+    struct IPlugin {
+        virtual ~IPlugin() = default;
+    };
+    struct Plugin : IPlugin {};
+
+    struct IHost {
+        virtual ~IHost() = default;
+    };
+    struct Host : IHost {
+        explicit Host(std::vector<std::unique_ptr<IPlugin>> /*ps*/) {}
+    };
+
+    librtdi::registry reg;
+    reg.add_collection<IPlugin, Plugin>(librtdi::lifetime_kind::transient);
+    reg.add_singleton<IHost, Host>(
+        librtdi::deps<librtdi::collection<librtdi::transient<IPlugin>>>);
+    // is_transient && is_collection → allowed per captive dependency rules
+    REQUIRE_NOTHROW(reg.build());
+}
+
+// ---------------------------------------------------------------
+// Missing collection dependency detected
+// ---------------------------------------------------------------
+
+TEST_CASE("missing collection dependency detected", "[validation]") {
+    struct IPlugin {
+        virtual ~IPlugin() = default;
+    };
+    struct IHost {
+        virtual ~IHost() = default;
+    };
+    struct Host : IHost {
+        explicit Host(std::vector<IPlugin*> /*ps*/) {}
+    };
+
+    librtdi::registry reg;
+    // IPlugin collection is NOT registered
+    reg.add_singleton<IHost, Host>(
+        librtdi::deps<librtdi::collection<IPlugin>>);
+    REQUIRE_THROWS_AS(reg.build(), librtdi::not_found);
+}
+
+// ---------------------------------------------------------------
+// Missing transient dependency detected
+// ---------------------------------------------------------------
+
+TEST_CASE("missing transient dependency detected", "[validation]") {
+    struct IDep {
+        virtual ~IDep() = default;
+    };
+    struct ISvc {
+        virtual ~ISvc() = default;
+    };
+    struct Svc : ISvc {
+        explicit Svc(std::unique_ptr<IDep> /*d*/) {}
+    };
+
+    librtdi::registry reg;
+    // IDep transient is NOT registered
+    reg.add_transient<ISvc, Svc>(librtdi::deps<librtdi::transient<IDep>>);
+    REQUIRE_THROWS_AS(reg.build(), librtdi::not_found);
 }

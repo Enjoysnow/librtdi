@@ -1,122 +1,75 @@
 #include <catch2/catch_test_macros.hpp>
 #include <librtdi.hpp>
-#include <memory>
+#include <set>
+
+#include <atomic>
 #include <thread>
 #include <vector>
-#include <atomic>
 
-using namespace librtdi;
+namespace {
 
-// ---------------------------------------------------------------
-// Test interfaces
-// ---------------------------------------------------------------
-
-struct IConcurrent {
-    virtual ~IConcurrent() = default;
+struct ICounter {
+    virtual ~ICounter() = default;
+    virtual int id() const = 0;
 };
 
-struct ConcurrentImpl : IConcurrent {
-    static std::atomic<int> construct_count;
-    ConcurrentImpl() {
-        ++construct_count;
-        // Sleep briefly to widen the race window
-        std::this_thread::sleep_for(std::chrono::milliseconds(5));
-    }
-};
-std::atomic<int> ConcurrentImpl::construct_count{0};
+static std::atomic<int> g_counter_id{0};
 
-struct IScopedConcurrent {
-    virtual ~IScopedConcurrent() = default;
+struct Counter : ICounter {
+    int id_;
+    Counter() : id_(++g_counter_id) {}
+    int id() const override { return id_; }
 };
 
-struct ScopedConcurrentImpl : IScopedConcurrent {
-    static std::atomic<int> construct_count;
-    ScopedConcurrentImpl() {
-        ++construct_count;
-        std::this_thread::sleep_for(std::chrono::milliseconds(5));
-    }
-};
-std::atomic<int> ScopedConcurrentImpl::construct_count{0};
+} // namespace
 
-// ---------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------
+TEST_CASE("concurrent singleton resolution yields same instance", "[concurrency]") {
+    g_counter_id = 0;
 
-TEST_CASE("Concurrency: singleton resolved once under contention", "[concurrency]") {
-    ConcurrentImpl::construct_count = 0;
+    librtdi::registry reg;
+    reg.add_singleton<ICounter, Counter>();
+    auto r = reg.build({.validate_on_build = false});
 
-    registry registry;
-    registry.add_singleton<IConcurrent, ConcurrentImpl>();
-    auto resolver = registry.build();
-
-    constexpr std::size_t N = 32;
-    std::vector<std::jthread> threads;
-    std::vector<std::shared_ptr<IConcurrent>> results(N);
+    constexpr std::size_t N = 16;
+    std::vector<std::thread> threads;
+    std::vector<ICounter*> results(N, nullptr);
 
     for (std::size_t i = 0; i < N; ++i) {
         threads.emplace_back([&, i] {
-            results[i] = resolver->resolve<IConcurrent>();
+            results[i] = &r->get<ICounter>();
         });
     }
-    threads.clear(); // join all
+    for (auto& t : threads) t.join();
 
-    REQUIRE(ConcurrentImpl::construct_count == 1);
-    // All results should point to the same instance
+    // All threads must get the same instance
     for (std::size_t i = 1; i < N; ++i) {
-        REQUIRE(results[i].get() == results[0].get());
+        REQUIRE(results[i] == results[0]);
     }
+    // Only one instance was created
+    REQUIRE(results[0]->id() == 1);
 }
 
-TEST_CASE("Concurrency: concurrent scope creation and destruction", "[concurrency]") {
-    struct IScopedConc {
-        virtual ~IScopedConc() = default;
-    };
-    struct ScopedConcImpl : IScopedConc {};
+TEST_CASE("concurrent transient creation yields different instances", "[concurrency]") {
+    librtdi::registry reg;
+    reg.add_transient<ICounter, Counter>();
+    auto r = reg.build({.validate_on_build = false});
 
-    registry registry;
-    registry.add_scoped<IScopedConc, ScopedConcImpl>();
-    auto resolver = registry.build();
-
-    constexpr int N = 32;
-    std::vector<std::jthread> threads;
-    std::atomic<int> success_count{0};
-
-    for (int i = 0; i < N; ++i) {
-        threads.emplace_back([&] {
-            auto scope = resolver->create_scope();
-            auto svc = scope->get_resolver().resolve<IScopedConc>();
-            REQUIRE(svc != nullptr);
-            ++success_count;
-        });
-    }
-    threads.clear();
-
-    REQUIRE(success_count == N);
-}
-
-TEST_CASE("Concurrency: same scope resolves scoped once under contention", "[concurrency]") {
-    ScopedConcurrentImpl::construct_count = 0;
-
-    registry registry;
-    registry.add_scoped<IScopedConcurrent, ScopedConcurrentImpl>();
-    auto resolver = registry.build();
-
-    auto scope = resolver->create_scope();
-    auto& scoped_resolver = scope->get_resolver();
-
-    constexpr std::size_t N = 32;
-    std::vector<std::jthread> threads;
-    std::vector<std::shared_ptr<IScopedConcurrent>> results(N);
+    constexpr std::size_t N = 16;
+    std::vector<std::thread> threads;
+    std::vector<std::unique_ptr<ICounter>> results(N);
 
     for (std::size_t i = 0; i < N; ++i) {
         threads.emplace_back([&, i] {
-            results[i] = scoped_resolver.resolve<IScopedConcurrent>();
+            results[i] = r->create<ICounter>();
         });
     }
-    threads.clear();
+    for (auto& t : threads) t.join();
 
-    REQUIRE(ScopedConcurrentImpl::construct_count == 1);
-    for (std::size_t i = 1; i < N; ++i) {
-        REQUIRE(results[i].get() == results[0].get());
+    // All instances must be distinct
+    std::set<ICounter*> ptrs;
+    for (auto& p : results) {
+        REQUIRE(p != nullptr);
+        ptrs.insert(p.get());
     }
+    REQUIRE(ptrs.size() == N);
 }

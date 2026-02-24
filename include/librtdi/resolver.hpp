@@ -11,9 +11,7 @@
 
 namespace librtdi {
 
-class scope;
-
-class resolver : public std::enable_shared_from_this<resolver> {
+class resolver {
 public:
     ~resolver();
 
@@ -21,124 +19,130 @@ public:
     resolver& operator=(const resolver&) = delete;
 
     // ---------------------------------------------------------------
-    // Non-keyed resolution
+    // Non-keyed singleton resolution
     // ---------------------------------------------------------------
 
-    /// resolve a component; throws not_found if not registered,
-    /// ambiguous_component if multiple registrations exist.
+    /// Get a singleton by interface.  Throws not_found if not registered.
     template <typename T>
-    std::shared_ptr<T> resolve() {
-        auto ptr = resolve_strict_impl(typeid(T), std::string{});
-        if (!ptr) {
-            throw not_found(typeid(T));
-        }
-        return std::static_pointer_cast<T>(ptr);
+    T& get() {
+        void* p = get_singleton_impl(typeid(T), std::string{});
+        if (!p) throw not_found(typeid(T), std::string_view{},
+                                slot_hint(typeid(T), {}, "get<T>()"));
+        return *static_cast<T*>(p);
     }
 
-    /// resolve a component; returns nullptr if not registered,
-    /// throws ambiguous_component if multiple registrations exist.
+    /// Get a singleton; returns nullptr if not registered.
     template <typename T>
-    std::shared_ptr<T> try_resolve() {
-        return std::static_pointer_cast<T>(
-            resolve_strict_impl(typeid(T), std::string{}));
+    T* try_get() {
+        return static_cast<T*>(get_singleton_impl(typeid(T), std::string{}));
     }
 
-    /// resolve the last registered implementation (last-wins).
-    /// Throws not_found if not registered.
+    /// Create a new transient instance.  Throws not_found if not registered.
     template <typename T>
-    std::shared_ptr<T> resolve_any() {
-        auto ptr = resolve_any_impl(typeid(T), std::string{});
-        if (!ptr) {
-            throw not_found(typeid(T));
-        }
-        return std::static_pointer_cast<T>(ptr);
+    std::unique_ptr<T> create() {
+        auto ep = create_transient_impl(typeid(T), std::string{});
+        if (!ep) throw not_found(typeid(T), std::string_view{},
+                                 slot_hint(typeid(T), {}, "create<T>()"));
+        return std::unique_ptr<T>(static_cast<T*>(ep.release()));
     }
 
-    /// resolve the last registered implementation; returns nullptr if not registered.
+    /// Create a new transient instance; returns empty ptr if not registered.
     template <typename T>
-    std::shared_ptr<T> try_resolve_any() {
-        auto ptr = resolve_any_impl(typeid(T), std::string{});
-        return ptr ? std::static_pointer_cast<T>(ptr) : nullptr;
+    std::unique_ptr<T> try_create() {
+        auto ep = create_transient_impl(typeid(T), std::string{});
+        if (!ep) return nullptr;
+        return std::unique_ptr<T>(static_cast<T*>(ep.release()));
     }
 
-    /// resolve all implementations registered for T (non-keyed).
+    /// Get all singleton collection items for T.
     template <typename T>
-    std::vector<std::shared_ptr<T>> resolve_all() {
-        auto raw = resolve_all_impl(typeid(T), std::string{});
-        std::vector<std::shared_ptr<T>> result;
+    std::vector<T*> get_all() {
+        auto raw = get_collection_impl(typeid(T), std::string{});
+        std::vector<T*> result;
         result.reserve(raw.size());
-        for (auto& r : raw) {
-            result.push_back(std::static_pointer_cast<T>(r));
+        for (void* p : raw) result.push_back(static_cast<T*>(p));
+        return result;
+    }
+
+    /// Create all transient collection items for T.
+    template <typename T>
+    std::vector<std::unique_ptr<T>> create_all() {
+        auto raw = create_collection_impl(typeid(T), std::string{});
+        std::vector<std::unique_ptr<T>> result;
+        result.reserve(raw.size());
+        for (auto& ep : raw) {
+            result.push_back(std::unique_ptr<T>(static_cast<T*>(ep.release())));
         }
         return result;
     }
 
     // ---------------------------------------------------------------
-    // Keyed resolution
+    // Keyed singleton resolution
     // ---------------------------------------------------------------
 
-    /// resolve a keyed component; throws not_found if not found,
-    /// ambiguous_component if multiple registrations exist for that key.
+    /// Get a keyed singleton by interface.  Throws not_found if not registered.
     template <typename T>
-    std::shared_ptr<T> resolve(std::string_view key) {
-        auto ptr = resolve_strict_impl(typeid(T), std::string(key));
-        if (!ptr) {
-            throw not_found(typeid(T), key);
-        }
-        return std::static_pointer_cast<T>(ptr);
+    T& get(std::string_view key) {
+        void* p = get_singleton_impl(typeid(T), std::string(key));
+        if (!p) throw not_found(typeid(T), key,
+                                slot_hint(typeid(T), std::string(key), "get<T>(key)"));
+        return *static_cast<T*>(p);
     }
 
-    /// resolve a keyed component; returns nullptr if not found,
-    /// throws ambiguous_component if multiple registrations exist.
+    /// Get a keyed singleton; returns nullptr if not registered.
     template <typename T>
-    std::shared_ptr<T> try_resolve(std::string_view key) {
-        return std::static_pointer_cast<T>(
-            resolve_strict_impl(typeid(T), std::string(key)));
+    T* try_get(std::string_view key) {
+        return static_cast<T*>(get_singleton_impl(typeid(T), std::string(key)));
     }
 
-    /// resolve the last registered keyed implementation (last-wins).
+    /// Create a new keyed transient instance.  Throws not_found if not registered.
     template <typename T>
-    std::shared_ptr<T> resolve_any(std::string_view key) {
-        auto ptr = resolve_any_impl(typeid(T), std::string(key));
-        if (!ptr) {
-            throw not_found(typeid(T), key);
-        }
-        return std::static_pointer_cast<T>(ptr);
+    std::unique_ptr<T> create(std::string_view key) {
+        auto ep = create_transient_impl(typeid(T), std::string(key));
+        if (!ep) throw not_found(typeid(T), key,
+                                 slot_hint(typeid(T), std::string(key), "create<T>(key)"));
+        return std::unique_ptr<T>(static_cast<T*>(ep.release()));
     }
 
-    /// resolve the last registered keyed implementation; returns nullptr if not found.
+    /// Create a new keyed transient instance; returns empty ptr if not registered.
     template <typename T>
-    std::shared_ptr<T> try_resolve_any(std::string_view key) {
-        auto ptr = resolve_any_impl(typeid(T), std::string(key));
-        return ptr ? std::static_pointer_cast<T>(ptr) : nullptr;
+    std::unique_ptr<T> try_create(std::string_view key) {
+        auto ep = create_transient_impl(typeid(T), std::string(key));
+        if (!ep) return nullptr;
+        return std::unique_ptr<T>(static_cast<T*>(ep.release()));
     }
 
-    /// resolve all implementations registered for T with the given key.
+    /// Get all keyed singleton collection items for T.
     template <typename T>
-    std::vector<std::shared_ptr<T>> resolve_all(std::string_view key) {
-        auto raw = resolve_all_impl(typeid(T), std::string(key));
-        std::vector<std::shared_ptr<T>> result;
+    std::vector<T*> get_all(std::string_view key) {
+        auto raw = get_collection_impl(typeid(T), std::string(key));
+        std::vector<T*> result;
         result.reserve(raw.size());
-        for (auto& r : raw) {
-            result.push_back(std::static_pointer_cast<T>(r));
+        for (void* p : raw) result.push_back(static_cast<T*>(p));
+        return result;
+    }
+
+    /// Create all keyed transient collection items for T.
+    template <typename T>
+    std::vector<std::unique_ptr<T>> create_all(std::string_view key) {
+        auto raw = create_collection_impl(typeid(T), std::string(key));
+        std::vector<std::unique_ptr<T>> result;
+        result.reserve(raw.size());
+        for (auto& ep : raw) {
+            result.push_back(std::unique_ptr<T>(static_cast<T*>(ep.release())));
         }
         return result;
     }
 
     // ---------------------------------------------------------------
-    // scope management
+    // Internal: resolve a descriptor by index (used by forward)
     // ---------------------------------------------------------------
 
-    std::unique_ptr<scope> create_scope();
-
-    bool is_root() const noexcept;
-
-    /// resolve a specific descriptor by its internal index.
-    std::shared_ptr<void> resolve_by_index(std::size_t idx);
+    void* resolve_singleton_by_index(std::size_t idx);
+    erased_ptr resolve_transient_by_index(std::size_t idx);
 
 private:
     friend class registry;
-    friend class scope;
 
     struct impl;
 
@@ -146,16 +150,17 @@ private:
 
     explicit resolver(std::unique_ptr<impl> impl);
 
-    resolver(std::shared_ptr<impl> shared_impl, bool is_scoped);
+    // Non-template core implementations
+    void* get_singleton_impl(std::type_index type, const std::string& key);
+    erased_ptr create_transient_impl(std::type_index type, const std::string& key);
+    std::vector<void*> get_collection_impl(std::type_index type, const std::string& key);
+    std::vector<erased_ptr> create_collection_impl(std::type_index type, const std::string& key);
 
-    std::shared_ptr<void> resolve_strict_impl(std::type_index type, const std::string& key);
-    std::shared_ptr<void> resolve_any_impl(std::type_index type, const std::string& key);
-    std::vector<std::shared_ptr<void>> resolve_all_impl(std::type_index type, const std::string& key);
+    /// Build a diagnostic hint when a type is not found in the expected slot.
+    std::string slot_hint(std::type_index type, const std::string& key,
+                          const char* attempted_method) const;
 
     std::shared_ptr<impl> impl_;
-    bool is_scoped_ = false;
-    struct scoped_cache;
-    std::unique_ptr<scoped_cache> scoped_cache_;
 };
 
 } // namespace librtdi

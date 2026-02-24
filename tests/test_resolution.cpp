@@ -1,127 +1,234 @@
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
 #include <librtdi.hpp>
 #include <memory>
 
-using namespace librtdi;
+namespace {
 
-// ---------------------------------------------------------------
-// Test interfaces & implementations
-// ---------------------------------------------------------------
-
-struct IAlpha {
-    virtual ~IAlpha() = default;
-    virtual std::string Name() const = 0;
+struct IService {
+    virtual ~IService() = default;
+    virtual int value() const = 0;
 };
 
-struct AlphaImpl : IAlpha {
-    std::string Name() const override { return "Alpha"; }
+struct ServiceA : IService {
+    int value() const override { return 1; }
 };
 
-struct IBeta {
-    virtual ~IBeta() = default;
-    virtual std::string Name() const = 0;
+struct ServiceB : IService {
+    int value() const override { return 2; }
 };
 
-struct BetaImpl : IBeta {
-    std::shared_ptr<IAlpha> alpha_;
-    explicit BetaImpl(std::shared_ptr<IAlpha> a) : alpha_(std::move(a)) {}
-    std::string Name() const override { return "Beta->" + alpha_->Name(); }
-};
+} // namespace
 
-struct IGamma {
-    virtual ~IGamma() = default;
-    virtual std::string Name() const = 0;
-};
+TEST_CASE("get singleton", "[resolution]") {
+    librtdi::registry reg;
+    reg.add_singleton<IService, ServiceA>();
+    auto r = reg.build({.validate_on_build = false});
 
-struct GammaImpl : IGamma {
-    std::shared_ptr<IBeta> beta_;
-    explicit GammaImpl(std::shared_ptr<IBeta> b) : beta_(std::move(b)) {}
-    std::string Name() const override { return "Gamma->" + beta_->Name(); }
-};
-
-// ---------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------
-
-TEST_CASE("Resolution: resolve component with no dependencies", "[resolution]") {
-    registry registry;
-    registry.add_singleton<IAlpha, AlphaImpl>();
-    auto resolver = registry.build();
-
-    auto svc = resolver->resolve<IAlpha>();
-    REQUIRE(svc != nullptr);
-    REQUIRE(svc->Name() == "Alpha");
+    auto& svc = r->get<IService>();
+    REQUIRE(svc.value() == 1);
 }
 
-TEST_CASE("Resolution: try_resolve returns nullptr for unregistered", "[resolution]") {
-    registry registry;
-    auto resolver = registry.build({.validate_on_build = false});
+TEST_CASE("try_get returns pointer on success", "[resolution]") {
+    librtdi::registry reg;
+    reg.add_singleton<IService, ServiceA>();
+    auto r = reg.build({.validate_on_build = false});
 
-    auto svc = resolver->try_resolve<IAlpha>();
+    auto* svc = r->try_get<IService>();
+    REQUIRE(svc != nullptr);
+    REQUIRE(svc->value() == 1);
+}
+
+TEST_CASE("try_get returns nullptr on not registered", "[resolution]") {
+    librtdi::registry reg;
+    auto r = reg.build({.validate_on_build = false});
+
+    auto* svc = r->try_get<IService>();
     REQUIRE(svc == nullptr);
 }
 
-TEST_CASE("Resolution: resolve throws for unregistered", "[resolution]") {
-    registry registry;
-    auto resolver = registry.build({.validate_on_build = false});
+TEST_CASE("get throws not_found when not registered", "[resolution]") {
+    librtdi::registry reg;
+    auto r = reg.build({.validate_on_build = false});
 
-    REQUIRE_THROWS_AS(
-        resolver->resolve<IAlpha>(),
-        not_found);
+    REQUIRE_THROWS_AS(r->get<IService>(), librtdi::not_found);
 }
 
-TEST_CASE("Resolution: 2-level dependency chain", "[resolution]") {
-    registry registry;
-    registry.add_singleton<IAlpha, AlphaImpl>();
-    registry.add_singleton<IBeta, BetaImpl>(deps<IAlpha>);
-    auto resolver = registry.build();
+TEST_CASE("create transient", "[resolution]") {
+    librtdi::registry reg;
+    reg.add_transient<IService, ServiceA>();
+    auto r = reg.build({.validate_on_build = false});
 
-    auto svc = resolver->resolve<IBeta>();
-    REQUIRE(svc->Name() == "Beta->Alpha");
+    auto svc = r->create<IService>();
+    REQUIRE(svc != nullptr);
+    REQUIRE(svc->value() == 1);
 }
 
-TEST_CASE("Resolution: 3-level dependency chain", "[resolution]") {
-    registry registry;
-    registry.add_singleton<IAlpha, AlphaImpl>();
-    registry.add_singleton<IBeta, BetaImpl>(deps<IAlpha>);
-    registry.add_singleton<IGamma, GammaImpl>(deps<IBeta>);
-    auto resolver = registry.build();
+TEST_CASE("try_create returns nullptr when not registered", "[resolution]") {
+    librtdi::registry reg;
+    auto r = reg.build({.validate_on_build = false});
 
-    auto svc = resolver->resolve<IGamma>();
-    REQUIRE(svc->Name() == "Gamma->Beta->Alpha");
+    auto svc = r->try_create<IService>();
+    REQUIRE(svc == nullptr);
 }
 
-TEST_CASE("Resolution: diamond dependency singleton constructed once", "[resolution]") {
-    static int alpha_count = 0;
-    alpha_count = 0;
+TEST_CASE("create throws not_found when not registered", "[resolution]") {
+    librtdi::registry reg;
+    auto r = reg.build({.validate_on_build = false});
 
-    struct AlphaCounting : IAlpha {
-        AlphaCounting() { ++alpha_count; }
-        std::string Name() const override { return "AlphaC"; }
+    REQUIRE_THROWS_AS(r->create<IService>(), librtdi::not_found);
+}
+
+TEST_CASE("get_all singleton collection", "[resolution]") {
+    librtdi::registry reg;
+    reg.add_collection<IService, ServiceA>(librtdi::lifetime_kind::singleton);
+    reg.add_collection<IService, ServiceB>(librtdi::lifetime_kind::singleton);
+    auto r = reg.build({.validate_on_build = false});
+
+    auto all = r->get_all<IService>();
+    REQUIRE(all.size() == 2);
+    // Verify both values are present
+    bool has1 = false, has2 = false;
+    for (auto* p : all) {
+        if (p->value() == 1) has1 = true;
+        if (p->value() == 2) has2 = true;
+    }
+    REQUIRE(has1);
+    REQUIRE(has2);
+}
+
+TEST_CASE("create_all transient collection", "[resolution]") {
+    librtdi::registry reg;
+    reg.add_collection<IService, ServiceA>(librtdi::lifetime_kind::transient);
+    reg.add_collection<IService, ServiceB>(librtdi::lifetime_kind::transient);
+    auto r = reg.build({.validate_on_build = false});
+
+    auto all = r->create_all<IService>();
+    REQUIRE(all.size() == 2);
+}
+
+TEST_CASE("get_all returns empty when no collection registered", "[resolution]") {
+    librtdi::registry reg;
+    auto r = reg.build({.validate_on_build = false});
+
+    auto all = r->get_all<IService>();
+    REQUIRE(all.empty());
+}
+
+TEST_CASE("create_all returns empty when no collection registered", "[resolution]") {
+    librtdi::registry reg;
+    auto r = reg.build({.validate_on_build = false});
+
+    auto all = r->create_all<IService>();
+    REQUIRE(all.empty());
+}
+
+// ---------------------------------------------------------------
+// resolution_error wraps factory exceptions
+// ---------------------------------------------------------------
+
+TEST_CASE("resolution_error wraps factory exception", "[resolution]") {
+    struct IFailing {
+        virtual ~IFailing() = default;
+    };
+    struct FailingImpl : IFailing {
+        FailingImpl() { throw std::runtime_error("factory boom"); }
     };
 
-    struct ILeft {
-        virtual ~ILeft() = default;
+    librtdi::registry reg;
+    reg.add_singleton<IFailing, FailingImpl>();
+    auto r = reg.build({.validate_on_build = false});
+
+    try {
+        r->get<IFailing>();
+        FAIL("Expected resolution_error");
+    } catch (const librtdi::resolution_error& e) {
+        std::string msg = e.what();
+        REQUIRE_THAT(msg, Catch::Matchers::ContainsSubstring("factory boom"));
+    }
+}
+
+TEST_CASE("resolution_error passes through di_error", "[resolution]") {
+    struct IDep {
+        virtual ~IDep() = default;
     };
-    struct LeftImpl : ILeft {
-        std::shared_ptr<IAlpha> a_;
-        explicit LeftImpl(std::shared_ptr<IAlpha> a) : a_(std::move(a)) {}
+    struct ISvc {
+        virtual ~ISvc() = default;
     };
-    struct IRight {
-        virtual ~IRight() = default;
-    };
-    struct RightImpl : IRight {
-        std::shared_ptr<IAlpha> a_;
-        explicit RightImpl(std::shared_ptr<IAlpha> a) : a_(std::move(a)) {}
+    struct Svc : ISvc {
+        explicit Svc(IDep& /*dep*/) {}
     };
 
-    registry registry;
-    registry.add_singleton<IAlpha, AlphaCounting>();
-    registry.add_singleton<ILeft, LeftImpl>(deps<IAlpha>);
-    registry.add_singleton<IRight, RightImpl>(deps<IAlpha>);
-    auto resolver = registry.build();
+    librtdi::registry reg;
+    // ISvc depends on IDep which is not registered
+    reg.add_singleton<ISvc, Svc>(librtdi::deps<IDep>);
+    auto r = reg.build({.validate_on_build = false});
 
-    auto left = resolver->resolve<ILeft>();
-    auto right = resolver->resolve<IRight>();
-    REQUIRE(alpha_count == 1); // Singleton — only one instance created
+    // When resolving ISvc, resolving IDep will throw not_found;
+    // resolver should NOT wrap di_error in resolution_error
+    REQUIRE_THROWS_AS(r->get<ISvc>(), librtdi::not_found);
+}
+
+TEST_CASE("transient resolution_error wraps factory exception", "[resolution]") {
+    struct IFailing {
+        virtual ~IFailing() = default;
+    };
+    struct FailingImpl : IFailing {
+        FailingImpl() { throw std::runtime_error("transient boom"); }
+    };
+
+    librtdi::registry reg;
+    reg.add_transient<IFailing, FailingImpl>();
+    auto r = reg.build({.validate_on_build = false});
+
+    REQUIRE_THROWS_AS(r->create<IFailing>(), librtdi::resolution_error);
+}
+
+// ---------------------------------------------------------------
+// Slot hint diagnostics: not_found message includes usage hint
+// ---------------------------------------------------------------
+
+TEST_CASE("not_found hint: get<T> when only transient registered", "[resolution][diagnostics]") {
+    librtdi::registry reg;
+    reg.add_transient<IService, ServiceA>();
+    auto r = reg.build({.validate_on_build = false});
+
+    try {
+        r->get<IService>();
+        FAIL("expected not_found");
+    } catch (const librtdi::not_found& e) {
+        std::string msg = e.what();
+        REQUIRE_THAT(msg, Catch::Matchers::ContainsSubstring("transient"));
+        REQUIRE_THAT(msg, Catch::Matchers::ContainsSubstring("create<T>()"));
+    }
+}
+
+TEST_CASE("not_found hint: create<T> when only singleton registered", "[resolution][diagnostics]") {
+    librtdi::registry reg;
+    reg.add_singleton<IService, ServiceA>();
+    auto r = reg.build({.validate_on_build = false});
+
+    try {
+        r->create<IService>();
+        FAIL("expected not_found");
+    } catch (const librtdi::not_found& e) {
+        std::string msg = e.what();
+        REQUIRE_THAT(msg, Catch::Matchers::ContainsSubstring("singleton"));
+        REQUIRE_THAT(msg, Catch::Matchers::ContainsSubstring("get<T>()"));
+    }
+}
+
+TEST_CASE("not_found hint: get<T> when only collection registered", "[resolution][diagnostics]") {
+    librtdi::registry reg;
+    reg.add_collection<IService, ServiceA>(librtdi::lifetime_kind::singleton);
+    auto r = reg.build({.validate_on_build = false});
+
+    try {
+        r->get<IService>();
+        FAIL("expected not_found");
+    } catch (const librtdi::not_found& e) {
+        std::string msg = e.what();
+        REQUIRE_THAT(msg, Catch::Matchers::ContainsSubstring("collection"));
+        REQUIRE_THAT(msg, Catch::Matchers::ContainsSubstring("get_all<T>()"));
+    }
 }

@@ -3,323 +3,220 @@
 #include <memory>
 #include <string>
 
-using namespace librtdi;
+namespace {
 
-// ---------------------------------------------------------------
-// Test type hierarchy
-// ---------------------------------------------------------------
-
-struct IAnimal {
-    virtual ~IAnimal() = default;
-    virtual std::string Species() const = 0;
+struct IBase {
+    virtual ~IBase() = default;
+    virtual int value() const = 0;
 };
 
-struct IMammal : IAnimal {
-    virtual int Legs() const = 0;
+struct IDerived : IBase {};
+
+struct Impl : IDerived {
+    int value() const override { return 42; }
 };
 
-struct Dog : IMammal {
-    std::string Species() const override { return "Dog"; }
-    int Legs() const override { return 4; }
-};
+} // namespace
 
-// Multi-interface: Foo implements IBar
-struct IBar {
-    virtual ~IBar() = default;
-    virtual int Value() const = 0;
-};
+TEST_CASE("forward singleton slot", "[forward]") {
+    librtdi::registry reg;
+    reg.add_singleton<IDerived, Impl>();
+    reg.forward<IBase, IDerived>();
+    auto r = reg.build({.validate_on_build = false});
 
-struct Foo : IBar {
-    int val_;
-    Foo() : val_(42) {}
-    int Value() const override { return val_; }
-};
-
-// Separate interface for second forward test
-struct IBaz {
-    virtual ~IBaz() = default;
-    virtual std::string Tag() const = 0;
-};
-
-struct Qux : IBaz {
-    std::string Tag() const override { return "qux"; }
-};
-
-// Multi-inheritance hierarchy for testing forward with multiple bases
-struct IFlyable {
-    virtual ~IFlyable() = default;
-    virtual std::string Fly() const = 0;
-};
-
-struct ISwimmable {
-    virtual ~ISwimmable() = default;
-    virtual std::string Swim() const = 0;
-};
-
-struct Duck : IAnimal, IFlyable, ISwimmable {
-    std::string Species() const override { return "Duck"; }
-    std::string Fly() const override { return "flap flap"; }
-    std::string Swim() const override { return "splash"; }
-};
-
-// ---------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------
-
-TEST_CASE("forward: interface and concrete resolve to same instance", "[forward]") {
-    registry registry;
-    registry.add_singleton<Foo, Foo>();
-    registry.forward<IBar, Foo>();
-    auto resolver = registry.build();
-
-    auto bar = resolver->resolve<IBar>();
-    auto foo = resolver->resolve<Foo>();
-
-    // forward delegates to resolve<Foo>(), so IBar and Foo share the singleton
-    REQUIRE(foo.get() == static_cast<Foo*>(bar.get()));
-    REQUIRE(bar->Value() == 42);
+    auto& derived = r->get<IDerived>();
+    auto& base = r->get<IBase>();
+    REQUIRE(base.value() == 42);
+    // Forward returns the same underlying singleton
+    REQUIRE(&static_cast<IBase&>(derived) == &base);
 }
 
-TEST_CASE("forward: three interface levels resolve to same instance", "[forward]") {
-    registry registry;
-    registry.add_singleton<Dog, Dog>();
-    registry.forward<IMammal, Dog>();
-    registry.forward<IAnimal, Dog>();
-    auto resolver = registry.build();
+TEST_CASE("forward transient slot", "[forward]") {
+    librtdi::registry reg;
+    reg.add_transient<IDerived, Impl>();
+    reg.forward<IBase, IDerived>();
+    auto r = reg.build({.validate_on_build = false});
 
-    auto dog    = resolver->resolve<Dog>();
-    auto mammal = resolver->resolve<IMammal>();
-    auto animal = resolver->resolve<IAnimal>();
-
-    REQUIRE(dog.get() == dynamic_cast<Dog*>(mammal.get()));
-    REQUIRE(dog.get() == dynamic_cast<Dog*>(animal.get()));
+    auto base = r->create<IBase>();
+    REQUIRE(base != nullptr);
+    REQUIRE(base->value() == 42);
 }
 
-TEST_CASE("forward: inherits target's singleton lifetime", "[forward]") {
-    registry registry;
-    registry.add_singleton<Foo, Foo>();
-    registry.forward<IBar, Foo>();
-    auto resolver = registry.build();
+TEST_CASE("forward propagates all slots", "[forward]") {
+    librtdi::registry reg;
+    reg.add_singleton<IDerived, Impl>();
+    reg.add_transient<IDerived, Impl>();
+    reg.forward<IBase, IDerived>();
+    auto r = reg.build({.validate_on_build = false});
 
-    auto bar1 = resolver->resolve<IBar>();
-    auto bar2 = resolver->resolve<IBar>();
-    // Because Foo is Singleton, forward always returns the same instance
-    REQUIRE(bar1.get() == bar2.get());
+    // Both singleton and transient slots should exist for IBase
+    auto& single = r->get<IBase>();
+    REQUIRE(single.value() == 42);
+
+    auto trans = r->create<IBase>();
+    REQUIRE(trans != nullptr);
+    REQUIRE(trans->value() == 42);
 }
 
-TEST_CASE("forward: inherits target's scoped lifetime", "[forward]") {
-    registry registry;
-    registry.add_scoped<Foo, Foo>();
-    registry.forward<IBar, Foo>();
-    auto resolver = registry.build();
-
-    auto scope1 = resolver->create_scope();
-    auto scope2 = resolver->create_scope();
-
-    auto bar1a = scope1->get_resolver().resolve<IBar>();
-    auto bar1b = scope1->get_resolver().resolve<IBar>();
-    auto bar2  = scope2->get_resolver().resolve<IBar>();
-
-    // Same scope → same instance (because Foo is Scoped)
-    REQUIRE(bar1a.get() == bar1b.get());
-    // Different scope → different instance
-    REQUIRE(bar1a.get() != bar2.get());
-}
-
-TEST_CASE("forward: unregistered target fails validation", "[forward]") {
-    registry registry;
-    // forward to Dog which is NOT registered
-    registry.forward<IAnimal, Dog>();
-
-    REQUIRE_THROWS_AS(
-        registry.build(),
-        not_found);
-}
-
-TEST_CASE("forward: with registration_policy::single prevents duplicate forward", "[forward]") {
-    registry registry;
-    registry.add_singleton<Foo, Foo>();
-    registry.forward<IBar, Foo>(registration_policy::single);
-
-    const auto& descs = registry.descriptors();
-    const descriptor* fwd_desc = nullptr;
-    for (auto& d : descs) {
-        if (d.component_type == typeid(IBar) && d.forward_target.has_value()) {
-            fwd_desc = &d;
-            break;
-        }
-    }
-    REQUIRE(fwd_desc != nullptr);
-    REQUIRE(fwd_desc->is_single_slot);
-
-    // Second forward for same interface should throw
-    REQUIRE_THROWS_AS(
-        (registry.forward<IBar, Foo>(registration_policy::single)),
-        duplicate_registration);
-}
-
-TEST_CASE("forward: Single slot integrity checked after expansion", "[forward]") {
-    // IBar is locked as Single, but Foo has two registrations.
-    // forward expansion would create 2 IBar descriptors, so build must fail.
-    registry registry;
-    registry.add_singleton<Foo, Foo>();
-    registry.add_singleton<Foo, Foo>();
-    registry.forward<IBar, Foo>(registration_policy::single);
-
-    REQUIRE_THROWS_AS(registry.build(), duplicate_registration);
-}
-
-TEST_CASE("forward: with registration_policy::skip is idempotent", "[forward]") {
-    registry registry;
-    registry.add_singleton<Foo, Foo>();
-    registry.forward<IBar, Foo>(registration_policy::skip);
-    // Second forward silently skipped
-    REQUIRE_NOTHROW(registry.forward<IBar, Foo>(registration_policy::skip));
-
-    auto resolver = registry.build();
-    REQUIRE(resolver->resolve<IBar>() != nullptr);
-    // Should be only one registration for IBar
-    REQUIRE(resolver->resolve_all<IBar>().size() == 1);
-}
-
-TEST_CASE("forward: lifetime copied from target at build", "[forward]") {
-    registry registry;
-    registry.add_singleton<Foo, Foo>();
-    registry.forward<IBar, Foo>();
-
-    // Before build, we can check the descriptors
-    const auto& descs = registry.descriptors();
-    // Find the forward descriptor for IBar
-    const descriptor* fwd_desc = nullptr;
-    for (auto& d : descs) {
-        if (d.component_type == typeid(IBar) && d.forward_target.has_value()) {
-            fwd_desc = &d;
-        }
-    }
-    REQUIRE(fwd_desc != nullptr);
-    // Before build, forward has placeholder Transient
-    REQUIRE(fwd_desc->lifetime == lifetime_kind::transient);
-
-    auto resolver = registry.build();
-    // After build, the descriptor's lifetime should have been updated
-    // We verify by observing singleton behavior: same instance each time
-    auto bar1 = resolver->resolve<IBar>();
-    auto bar2 = resolver->resolve<IBar>();
-    REQUIRE(bar1.get() == bar2.get());
-}
-
-TEST_CASE("forward: singleton depending on forwarded singleton passes validation", "[forward]") {
-    // If forward copies Singleton lifetime, then another Singleton depending on
-    // the forwarded interface should NOT trigger lifetime_mismatch.
-    struct IService {
-        virtual ~IService() = default;
-    };
-    struct ServiceImpl : IService {
-        std::shared_ptr<IBar> bar_;
-        explicit ServiceImpl(std::shared_ptr<IBar> bar) : bar_(std::move(bar)) {}
+TEST_CASE("forward with collection slot", "[forward]") {
+    struct IPlugin {
+        virtual ~IPlugin() = default;
+        virtual std::string name() const = 0;
     };
 
-    registry registry;
-    registry.add_singleton<Foo, Foo>();
-    registry.forward<IBar, Foo>();
-    registry.add_singleton<IService, ServiceImpl>(deps<IBar>);
+    struct IDerivedPlugin : IPlugin {};
 
-    // Should NOT throw — IBar has Singleton lifetime (copied from Foo)
-    REQUIRE_NOTHROW(registry.build());
-}
-
-TEST_CASE("forward: singleton depending on forwarded scoped fails validation", "[forward]") {
-    // If forward copies Scoped lifetime from target, then a Singleton depending
-    // on the forwarded interface SHOULD trigger lifetime_mismatch.
-    struct IService {
-        virtual ~IService() = default;
+    struct PluginA : IDerivedPlugin {
+        std::string name() const override { return "A"; }
     };
-    struct ServiceImpl : IService {
-        std::shared_ptr<IBar> bar_;
-        explicit ServiceImpl(std::shared_ptr<IBar> bar) : bar_(std::move(bar)) {}
+    struct PluginB : IDerivedPlugin {
+        std::string name() const override { return "B"; }
     };
 
-    registry registry;
-    registry.add_scoped<Foo, Foo>();
-    registry.forward<IBar, Foo>();
-    registry.add_singleton<IService, ServiceImpl>(deps<IBar>);
+    librtdi::registry reg;
+    reg.add_collection<IDerivedPlugin, PluginA>(librtdi::lifetime_kind::singleton);
+    reg.add_collection<IDerivedPlugin, PluginB>(librtdi::lifetime_kind::singleton);
+    reg.forward<IPlugin, IDerivedPlugin>();
+    auto r = reg.build({.validate_on_build = false});
 
-    // Should throw — Singleton depends on Scoped (via forward)
-    REQUIRE_THROWS_AS(registry.build(), lifetime_mismatch);
+    auto all = r->get_all<IDerivedPlugin>();
+    REQUIRE(all.size() == 2);
+
+    auto base_all = r->get_all<IPlugin>();
+    REQUIRE(base_all.size() == 2);
 }
 
-TEST_CASE("forward: expands to all target registrations", "[forward]") {
-    // forward expands into N descriptors, one per target registration.
-    // With 2 Foo registrations, IBar gets 2 descriptors.
-    registry registry;
-    registry.add_singleton<Foo, Foo>();    // first registration
-    registry.add_singleton<Foo, Foo>();    // second registration
-    registry.forward<IBar, Foo>();
-    auto resolver = registry.build();
+// ---------------------------------------------------------------
+// Forward transient returns different instances each time
+// ---------------------------------------------------------------
 
-    // 2 registrations → resolve throws ambiguous_component
-    REQUIRE_THROWS_AS(resolver->resolve<IBar>(), ambiguous_component);
+TEST_CASE("forward transient returns new instances", "[forward]") {
+    librtdi::registry reg;
+    reg.add_transient<IDerived, Impl>();
+    reg.forward<IBase, IDerived>();
+    auto r = reg.build({.validate_on_build = false});
 
-    // resolve_any returns the last one
-    auto bar = resolver->resolve_any<IBar>();
-    REQUIRE(bar->Value() == 42);
-
-    // resolve_all mirrors the target registrations
-    auto bars = resolver->resolve_all<IBar>();
-    auto foos = resolver->resolve_all<Foo>();
-    REQUIRE(bars.size() == 2);
-    REQUIRE(foos.size() == 2);
-
-    // Each IBar shares the same Singleton instance as its corresponding Foo
-    REQUIRE(bars[0].get() == foos[0].get());
-    REQUIRE(bars[1].get() == foos[1].get());
+    auto a = r->create<IBase>();
+    auto b = r->create<IBase>();
+    REQUIRE(a.get() != b.get());
+    REQUIRE(a->value() == 42);
+    REQUIRE(b->value() == 42);
 }
 
-TEST_CASE("forward: Scoped instances shared per registration per scope", "[forward]") {
-    registry registry;
-    registry.add_scoped<Foo, Foo>();
-    registry.add_scoped<Foo, Foo>();
-    registry.forward<IBar, Foo>();
-    auto resolver = registry.build();
+// ---------------------------------------------------------------
+// Forward to unregistered type produces placeholder → validation catches it
+// ---------------------------------------------------------------
 
-    auto scope1 = resolver->create_scope();
-    auto scope2 = resolver->create_scope();
+TEST_CASE("forward to unregistered type fails validation", "[forward]") {
+    struct IUnreg {
+        virtual ~IUnreg() = default;
+    };
 
-    auto bars1 = scope1->get_resolver().resolve_all<IBar>();
-    auto foos1 = scope1->get_resolver().resolve_all<Foo>();
-    auto bars2 = scope2->get_resolver().resolve_all<IBar>();
-
-    REQUIRE(bars1.size() == 2);
-    // Same scope: IBar[k] shares instance with Foo[k]
-    REQUIRE(bars1[0].get() == foos1[0].get());
-    REQUIRE(bars1[1].get() == foos1[1].get());
-    // Different scope: different instances
-    REQUIRE(bars1[0].get() != bars2[0].get());
-    REQUIRE(bars1[1].get() != bars2[1].get());
+    librtdi::registry reg;
+    // No registration for IDerived at all
+    reg.forward<IBase, IDerived>();
+    // The placeholder descriptor depends on IDerived which is missing
+    REQUIRE_THROWS_AS(reg.build(), librtdi::not_found);
 }
 
-TEST_CASE("forward: multi-inheritance with correct pointer adjustment", "[forward]") {
-    // Duck inherits IAnimal, IFlyable, ISwimmable — three bases.
-    // Without two-step cast, second+ bases would get wrong pointer offsets.
-    registry registry;
-    registry.add_singleton<Duck, Duck>();
-    registry.forward<IAnimal, Duck>();
-    registry.forward<IFlyable, Duck>();
-    registry.forward<ISwimmable, Duck>();
-    auto resolver = registry.build();
+// ---------------------------------------------------------------
+// Forward with transient collection
+// ---------------------------------------------------------------
 
-    auto duck     = resolver->resolve<Duck>();
-    auto animal   = resolver->resolve<IAnimal>();
-    auto flyable  = resolver->resolve<IFlyable>();
-    auto swimmable = resolver->resolve<ISwimmable>();
+TEST_CASE("forward with transient collection", "[forward]") {
+    struct IPlugin {
+        virtual ~IPlugin() = default;
+        virtual std::string name() const = 0;
+    };
 
-    // All should be the same Duck instance, verified via dynamic_cast
-    REQUIRE(dynamic_cast<Duck*>(animal.get()) == duck.get());
-    REQUIRE(dynamic_cast<Duck*>(flyable.get()) == duck.get());
-    REQUIRE(dynamic_cast<Duck*>(swimmable.get()) == duck.get());
+    struct IDerivedPlugin : IPlugin {};
 
-    // Verify actual method dispatch works (not just pointer equality)
-    REQUIRE(animal->Species() == "Duck");
-    REQUIRE(flyable->Fly() == "flap flap");
-    REQUIRE(swimmable->Swim() == "splash");
+    struct PluginA : IDerivedPlugin {
+        std::string name() const override { return "A"; }
+    };
+    struct PluginB : IDerivedPlugin {
+        std::string name() const override { return "B"; }
+    };
+
+    librtdi::registry reg;
+    reg.add_collection<IDerivedPlugin, PluginA>(librtdi::lifetime_kind::transient);
+    reg.add_collection<IDerivedPlugin, PluginB>(librtdi::lifetime_kind::transient);
+    reg.forward<IPlugin, IDerivedPlugin>();
+    auto r = reg.build({.validate_on_build = false});
+
+    auto all1 = r->create_all<IPlugin>();
+    auto all2 = r->create_all<IPlugin>();
+    REQUIRE(all1.size() == 2);
+    REQUIRE(all2.size() == 2);
+    // Each call creates fresh instances
+    REQUIRE(all1[0].get() != all2[0].get());
+}
+
+// ---------------------------------------------------------------
+// Forward singleton + decorator: decorator skips forward-singleton
+// (forward-singleton returns non-owning erased_ptr, decorating would double-free)
+// ---------------------------------------------------------------
+
+TEST_CASE("forward singleton is not decorated (ownership safety)", "[forward][decorator]") {
+    struct BaseDecorator : IBase {
+        std::unique_ptr<IBase> inner_;
+        explicit BaseDecorator(std::unique_ptr<IBase> inner)
+            : inner_(std::move(inner)) {}
+        int value() const override { return inner_->value() + 100; }
+    };
+
+    librtdi::registry reg;
+    reg.add_singleton<IDerived, Impl>();
+    reg.forward<IBase, IDerived>();
+    // This decorator targets IBase — should NOT be applied to the
+    // forward-expanded singleton descriptor (would cause double-free)
+    reg.decorate<IBase, BaseDecorator>();
+    auto r = reg.build({.validate_on_build = false});
+
+    // The forward-singleton should return the raw value (not decorated)
+    auto& base = r->get<IBase>();
+    REQUIRE(base.value() == 42);
+    // No crash on resolver destruction (the critical assertion)
+}
+
+TEST_CASE("forward transient CAN be decorated", "[forward][decorator]") {
+    struct BaseDecorator : IBase {
+        std::unique_ptr<IBase> inner_;
+        explicit BaseDecorator(std::unique_ptr<IBase> inner)
+            : inner_(std::move(inner)) {}
+        int value() const override { return inner_->value() + 100; }
+    };
+
+    librtdi::registry reg;
+    reg.add_transient<IDerived, Impl>();
+    reg.forward<IBase, IDerived>();
+    reg.decorate<IBase, BaseDecorator>();
+    auto r = reg.build({.validate_on_build = false});
+
+    auto ptr = r->create<IBase>();
+    REQUIRE(ptr->value() == 142);  // 42 + 100
+}
+
+TEST_CASE("decorating original propagates through forward singleton", "[forward][decorator]") {
+    struct DerivedDecorator : IDerived {
+        std::unique_ptr<IDerived> inner_;
+        explicit DerivedDecorator(std::unique_ptr<IDerived> inner)
+            : inner_(std::move(inner)) {}
+        int value() const override { return inner_->value() + 200; }
+    };
+
+    librtdi::registry reg;
+    reg.add_singleton<IDerived, Impl>();
+    reg.forward<IBase, IDerived>();
+    // Decorate the ORIGINAL registration (IDerived) — this should be
+    // visible through the forward since they share the same instance.
+    reg.decorate<IDerived, DerivedDecorator>();
+    auto r = reg.build({.validate_on_build = false});
+
+    auto& derived = r->get<IDerived>();
+    REQUIRE(derived.value() == 242);  // 42 + 200
+
+    // Forward singleton shares the same instance, so also decorated
+    auto& base = r->get<IBase>();
+    REQUIRE(base.value() == 242);
 }

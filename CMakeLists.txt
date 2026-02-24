@@ -41,6 +41,28 @@ install(
     FILES_MATCHING PATTERN "*.hpp"
 )
 
+# Generate CMake package config files for find_package(librtdi)
+include(CMakePackageConfigHelpers)
+
+configure_package_config_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/cmake/librtdiConfig.cmake.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/librtdiConfig.cmake"
+    INSTALL_DESTINATION lib/cmake/librtdi
+)
+
+write_basic_package_version_file(
+    "${CMAKE_CURRENT_BINARY_DIR}/librtdiConfigVersion.cmake"
+    VERSION ${PROJECT_VERSION}
+    COMPATIBILITY SameMajorVersion
+)
+
+install(
+    FILES
+        "${CMAKE_CURRENT_BINARY_DIR}/librtdiConfig.cmake"
+        "${CMAKE_CURRENT_BINARY_DIR}/librtdiConfigVersion.cmake"
+    DESTINATION lib/cmake/librtdi
+)
+
 # -----------------------------------------------------------------------
 # CPack packaging
 # -----------------------------------------------------------------------

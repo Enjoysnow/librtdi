@@ -1,255 +1,254 @@
 #include <catch2/catch_test_macros.hpp>
 #include <librtdi.hpp>
 #include <memory>
-#include <string>
-#include <vector>
 
-using namespace librtdi;
+namespace {
 
-// ---------------------------------------------------------------
-// Test type hierarchy
-// ---------------------------------------------------------------
-
-struct ILogger {
-    virtual ~ILogger() = default;
-    virtual std::string Log(std::string_view msg) const = 0;
+struct IService {
+    virtual ~IService() = default;
+    virtual std::string name() const = 0;
 };
 
-struct ConsoleLogger : ILogger {
-    std::string Log(std::string_view msg) const override {
-        return "console:" + std::string(msg);
-    }
+struct RealService : IService {
+    std::string name() const override { return "real"; }
 };
 
-struct FileLogger : ILogger {
-    std::string Log(std::string_view msg) const override {
-        return "file:" + std::string(msg);
-    }
+struct LoggingDecorator : IService {
+    std::unique_ptr<IService> inner_;
+    explicit LoggingDecorator(std::unique_ptr<IService> inner)
+        : inner_(std::move(inner)) {}
+    std::string name() const override { return "logged(" + inner_->name() + ")"; }
 };
 
-// Decorator 1: prepends timestamp
-struct TimestampLogger : ILogger {
-    std::shared_ptr<ILogger> inner_;
-    explicit TimestampLogger(std::shared_ptr<ILogger> inner) : inner_(std::move(inner)) {}
-    std::string Log(std::string_view msg) const override {
-        return "[TIME]" + inner_->Log(msg);
-    }
+struct CachingDecorator : IService {
+    std::unique_ptr<IService> inner_;
+    explicit CachingDecorator(std::unique_ptr<IService> inner)
+        : inner_(std::move(inner)) {}
+    std::string name() const override { return "cached(" + inner_->name() + ")"; }
 };
 
-// Decorator 2: prepends prefix
-struct PrefixLogger : ILogger {
-    std::shared_ptr<ILogger> inner_;
-    explicit PrefixLogger(std::shared_ptr<ILogger> inner) : inner_(std::move(inner)) {}
-    std::string Log(std::string_view msg) const override {
-        return "[PFX]" + inner_->Log(msg);
-    }
-};
+} // namespace
 
-// Extra dependency for decorator with deps
-struct IFormatter {
-    virtual ~IFormatter() = default;
-    virtual std::string Format(std::string_view s) const = 0;
-};
+TEST_CASE("basic decorator wraps singleton", "[decorator]") {
+    librtdi::registry reg;
+    reg.add_singleton<IService, RealService>();
+    reg.decorate<IService, LoggingDecorator>();
+    auto r = reg.build({.validate_on_build = false});
 
-struct UpperFormatter : IFormatter {
-    std::string Format(std::string_view s) const override {
-        std::string result(s);
-        for (auto& c : result) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
-        return result;
-    }
-};
-
-// Decorator with extra dependency
-struct FormattedLogger : ILogger {
-    std::shared_ptr<ILogger> inner_;
-    std::shared_ptr<IFormatter> fmt_;
-    FormattedLogger(std::shared_ptr<ILogger> inner, std::shared_ptr<IFormatter> fmt)
-        : inner_(std::move(inner)), fmt_(std::move(fmt)) {}
-    std::string Log(std::string_view msg) const override {
-        return inner_->Log(fmt_->Format(msg));
-    }
-};
-
-// ---------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------
-
-TEST_CASE("Decorator: basic single decoration", "[decorator]") {
-    registry registry;
-    registry.add_singleton<ILogger, ConsoleLogger>();
-    registry.decorate<ILogger, TimestampLogger>();
-    auto resolver = registry.build();
-
-    auto logger = resolver->resolve<ILogger>();
-    REQUIRE(logger->Log("hi") == "[TIME]console:hi");
+    auto& svc = r->get<IService>();
+    REQUIRE(svc.name() == "logged(real)");
 }
 
-TEST_CASE("Decorator: onion layering (D1 then D2)", "[decorator]") {
-    registry registry;
-    registry.add_singleton<ILogger, ConsoleLogger>();
-    registry.decorate<ILogger, TimestampLogger>();  // first wrap
-    registry.decorate<ILogger, PrefixLogger>();     // second wrap (outermost)
-    auto resolver = registry.build();
+TEST_CASE("basic decorator wraps transient", "[decorator]") {
+    librtdi::registry reg;
+    reg.add_transient<IService, RealService>();
+    reg.decorate<IService, LoggingDecorator>();
+    auto r = reg.build({.validate_on_build = false});
 
-    auto logger = resolver->resolve<ILogger>();
-    // PrefixLogger wraps TimestampLogger wraps ConsoleLogger
-    REQUIRE(logger->Log("hi") == "[PFX][TIME]console:hi");
+    auto svc = r->create<IService>();
+    REQUIRE(svc->name() == "logged(real)");
 }
 
-TEST_CASE("Decorator: repeated decoration (D1, D2, D1)", "[decorator]") {
-    registry registry;
-    registry.add_singleton<ILogger, ConsoleLogger>();
-    registry.decorate<ILogger, TimestampLogger>();
-    registry.decorate<ILogger, PrefixLogger>();
-    registry.decorate<ILogger, TimestampLogger>();  // D1 again
-    auto resolver = registry.build();
+TEST_CASE("multiple decorators stack", "[decorator]") {
+    librtdi::registry reg;
+    reg.add_singleton<IService, RealService>();
+    reg.decorate<IService, LoggingDecorator>();
+    reg.decorate<IService, CachingDecorator>();
+    auto r = reg.build({.validate_on_build = false});
 
-    auto logger = resolver->resolve<ILogger>();
-    // TimestampLogger(PrefixLogger(TimestampLogger(ConsoleLogger)))
-    REQUIRE(logger->Log("x") == "[TIME][PFX][TIME]console:x");
+    auto& svc = r->get<IService>();
+    REQUIRE(svc.name() == "cached(logged(real))");
 }
 
-TEST_CASE("Decorator: with extra dependency", "[decorator]") {
-    registry registry;
-    registry.add_singleton<IFormatter, UpperFormatter>();
-    registry.add_singleton<ILogger, ConsoleLogger>();
-    registry.decorate<ILogger, FormattedLogger>(deps<IFormatter>);
-    auto resolver = registry.build();
+TEST_CASE("decorator with extra deps", "[decorator]") {
+    struct IConfig {
+        virtual ~IConfig() = default;
+        virtual std::string prefix() const = 0;
+    };
+    struct Config : IConfig {
+        std::string prefix() const override { return "PREFIX"; }
+    };
 
-    auto logger = resolver->resolve<ILogger>();
-    REQUIRE(logger->Log("hello") == "console:HELLO");
+    struct PrefixDecorator : IService {
+        std::unique_ptr<IService> inner_;
+        IConfig& config_;
+        PrefixDecorator(std::unique_ptr<IService> inner, IConfig& config)
+            : inner_(std::move(inner)), config_(config) {}
+        std::string name() const override {
+            return config_.prefix() + ":" + inner_->name();
+        }
+    };
+
+    librtdi::registry reg;
+    reg.add_singleton<IConfig, Config>();
+    reg.add_singleton<IService, RealService>();
+    reg.decorate<IService, PrefixDecorator>(librtdi::deps<IConfig>);
+    auto r = reg.build();
+
+    auto& svc = r->get<IService>();
+    REQUIRE(svc.name() == "PREFIX:real");
 }
 
-TEST_CASE("Decorator: decorates all implementations (global)", "[decorator]") {
-    registry registry;
-    registry.add_singleton<ILogger, ConsoleLogger>();
-    registry.add_singleton<ILogger, FileLogger>();
-    registry.decorate<ILogger, TimestampLogger>();  // global: decorates both
-    auto resolver = registry.build();
+TEST_CASE("decorator targets specific impl", "[decorator]") {
+    struct ServiceX : IService {
+        std::string name() const override { return "X"; }
+    };
 
-    auto all = resolver->resolve_all<ILogger>();
+    librtdi::registry reg;
+    reg.add_collection<IService, RealService>(librtdi::lifetime_kind::singleton);
+    reg.add_collection<IService, ServiceX>(librtdi::lifetime_kind::singleton);
+    // Only decorate RealService, not ServiceX
+    reg.decorate<IService, LoggingDecorator>(std::type_index(typeid(RealService)));
+    auto r = reg.build({.validate_on_build = false});
+
+    auto all = r->get_all<IService>();
     REQUIRE(all.size() == 2);
-    REQUIRE(all[0]->Log("a") == "[TIME]console:a");
-    REQUIRE(all[1]->Log("b") == "[TIME]file:b");
+
+    bool found_logged = false;
+    bool found_plain_x = false;
+    for (auto* p : all) {
+        if (p->name() == "logged(real)") found_logged = true;
+        if (p->name() == "X") found_plain_x = true;
+    }
+    REQUIRE(found_logged);
+    REQUIRE(found_plain_x);
 }
 
-TEST_CASE("Decorator: decorates specific implementation only", "[decorator]") {
-    registry registry;
-    registry.add_singleton<ILogger, ConsoleLogger>();
-    registry.add_singleton<ILogger, FileLogger>();
-    registry.decorate<ILogger, TimestampLogger>(typeid(ConsoleLogger));
-    auto resolver = registry.build();
+// ---------------------------------------------------------------
+// Decorator on transient creates new decorated instance each time
+// ---------------------------------------------------------------
 
-    auto all = resolver->resolve_all<ILogger>();
+TEST_CASE("decorator on transient creates new each time", "[decorator]") {
+    librtdi::registry reg;
+    reg.add_transient<IService, RealService>();
+    reg.decorate<IService, LoggingDecorator>();
+    auto r = reg.build({.validate_on_build = false});
+
+    auto a = r->create<IService>();
+    auto b = r->create<IService>();
+    REQUIRE(a.get() != b.get());
+    REQUIRE(a->name() == "logged(real)");
+    REQUIRE(b->name() == "logged(real)");
+}
+
+// ---------------------------------------------------------------
+// Decorator applied to collection items
+// ---------------------------------------------------------------
+
+TEST_CASE("decorator applies to collection items", "[decorator]") {
+    struct ServiceY : IService {
+        std::string name() const override { return "Y"; }
+    };
+
+    librtdi::registry reg;
+    reg.add_collection<IService, RealService>(librtdi::lifetime_kind::singleton);
+    reg.add_collection<IService, ServiceY>(librtdi::lifetime_kind::singleton);
+    // Decorate ALL IService registrations
+    reg.decorate<IService, LoggingDecorator>();
+    auto r = reg.build({.validate_on_build = false});
+
+    auto all = r->get_all<IService>();
     REQUIRE(all.size() == 2);
-    REQUIRE(all[0]->Log("a") == "[TIME]console:a");  // ConsoleLogger decorated
-    REQUIRE(all[1]->Log("b") == "file:b");            // FileLogger untouched
+
+    bool found_logged_real = false;
+    bool found_logged_y = false;
+    for (auto* p : all) {
+        if (p->name() == "logged(real)") found_logged_real = true;
+        if (p->name() == "logged(Y)") found_logged_y = true;
+    }
+    REQUIRE(found_logged_real);
+    REQUIRE(found_logged_y);
 }
 
-TEST_CASE("Decorator: targeted + global mix (both applied in order)", "[decorator]") {
-    registry registry;
-    registry.add_singleton<ILogger, ConsoleLogger>();
-    registry.add_singleton<ILogger, FileLogger>();
-    // First: target ConsoleLogger only
-    registry.decorate<ILogger, PrefixLogger>(typeid(ConsoleLogger));
-    // Second: global
-    registry.decorate<ILogger, TimestampLogger>();
-    auto resolver = registry.build();
+// ---------------------------------------------------------------
+// Decorator with transient extra dep
+// ---------------------------------------------------------------
 
-    auto all = resolver->resolve_all<ILogger>();
+TEST_CASE("decorator with transient extra dep", "[decorator]") {
+    struct ITag {
+        virtual ~ITag() = default;
+        virtual std::string tag() const = 0;
+    };
+    struct Tag : ITag {
+        std::string tag() const override { return "TAG"; }
+    };
+
+    struct TagDecorator : IService {
+        std::unique_ptr<IService> inner_;
+        std::unique_ptr<ITag> tag_;
+        TagDecorator(std::unique_ptr<IService> inner, std::unique_ptr<ITag> tag)
+            : inner_(std::move(inner)), tag_(std::move(tag)) {}
+        std::string name() const override {
+            return tag_->tag() + ":" + inner_->name();
+        }
+    };
+
+    librtdi::registry reg;
+    reg.add_transient<ITag, Tag>();
+    reg.add_singleton<IService, RealService>();
+    reg.decorate<IService, TagDecorator>(
+        librtdi::deps<librtdi::transient<ITag>>);
+    auto r = reg.build({.validate_lifetimes = false});
+
+    REQUIRE(r->get<IService>().name() == "TAG:real");
+}
+
+// ---------------------------------------------------------------
+// decorate_target<I, D, TTarget>() — type-safe targeted decoration
+// ---------------------------------------------------------------
+
+TEST_CASE("decorate_target applies only to specified impl", "[decorator]") {
+    struct ServiceA : IService {
+        std::string name() const override { return "A"; }
+    };
+    struct ServiceB : IService {
+        std::string name() const override { return "B"; }
+    };
+
+    librtdi::registry reg;
+    reg.add_collection<IService, ServiceA>(librtdi::lifetime_kind::singleton);
+    reg.add_collection<IService, ServiceB>(librtdi::lifetime_kind::singleton);
+    // Only decorate ServiceA via type-safe overload (no type_index)
+    reg.decorate_target<IService, LoggingDecorator, ServiceA>();
+    auto r = reg.build({.validate_on_build = false});
+
+    auto all = r->get_all<IService>();
     REQUIRE(all.size() == 2);
-    // ConsoleLogger: both applied in order → TimestampLogger(PrefixLogger(ConsoleLogger))
-    REQUIRE(all[0]->Log("a") == "[TIME][PFX]console:a");
-    // FileLogger: only global applied → TimestampLogger(FileLogger)
-    REQUIRE(all[1]->Log("b") == "[TIME]file:b");
+
+    bool found_logged_a = false;
+    bool found_plain_b = false;
+    for (auto* p : all) {
+        if (p->name() == "logged(A)") found_logged_a = true;
+        if (p->name() == "B") found_plain_b = true;
+    }
+    REQUIRE(found_logged_a);
+    REQUIRE(found_plain_b);
 }
 
-TEST_CASE("Decorator: inherits singleton lifetime", "[decorator]") {
-    registry registry;
-    registry.add_singleton<ILogger, ConsoleLogger>();
-    registry.decorate<ILogger, TimestampLogger>();
-    auto resolver = registry.build();
+TEST_CASE("decorate_target with extra deps", "[decorator]") {
+    struct IConfig {
+        virtual ~IConfig() = default;
+        virtual std::string tag() const = 0;
+    };
+    struct Config : IConfig {
+        std::string tag() const override { return "CFG"; }
+    };
 
-    auto a = resolver->resolve<ILogger>();
-    auto b = resolver->resolve<ILogger>();
-    REQUIRE(a.get() == b.get());
-}
+    struct TargetedDec : IService {
+        std::unique_ptr<IService> inner_;
+        IConfig& cfg_;
+        TargetedDec(std::unique_ptr<IService> inner, IConfig& cfg)
+            : inner_(std::move(inner)), cfg_(cfg) {}
+        std::string name() const override {
+            return cfg_.tag() + ":" + inner_->name();
+        }
+    };
 
-TEST_CASE("Decorator: inherits scoped lifetime", "[decorator]") {
-    registry registry;
-    registry.add_scoped<ILogger, ConsoleLogger>();
-    registry.decorate<ILogger, TimestampLogger>();
-    auto resolver = registry.build();
+    librtdi::registry reg;
+    reg.add_singleton<IConfig, Config>();
+    reg.add_singleton<IService, RealService>();
+    reg.decorate_target<IService, TargetedDec, RealService>(librtdi::deps<IConfig>);
+    auto r = reg.build();
 
-    auto scope1 = resolver->create_scope();
-    auto scope2 = resolver->create_scope();
-    auto a = scope1->get_resolver().resolve<ILogger>();
-    auto b = scope1->get_resolver().resolve<ILogger>();
-    auto c = scope2->get_resolver().resolve<ILogger>();
-
-    REQUIRE(a.get() == b.get());   // same scope
-    REQUIRE(a.get() != c.get());   // different scope
-}
-
-TEST_CASE("Decorator: missing extra dep fails validation", "[decorator]") {
-    registry registry;
-    registry.add_singleton<ILogger, ConsoleLogger>();
-    // FormattedLogger needs IFormatter, which is NOT registered
-    registry.decorate<ILogger, FormattedLogger>(deps<IFormatter>);
-
-    REQUIRE_THROWS_AS(registry.build(), not_found);
-}
-
-TEST_CASE("Decorator: still applies after Replace", "[decorator]") {
-    registry registry;
-    registry.add_singleton<ILogger, ConsoleLogger>();
-    registry.decorate<ILogger, TimestampLogger>();
-    // Replace: removes ConsoleLogger, adds FileLogger
-    registry.add_singleton<ILogger, FileLogger>(registration_policy::replace);
-    auto resolver = registry.build();
-
-    auto logger = resolver->resolve<ILogger>();
-    // Decorator should apply to the replacement (FileLogger)
-    REQUIRE(logger->Log("x") == "[TIME]file:x");
-}
-
-TEST_CASE("Decorator: targeted for removed impl silently no-ops", "[decorator]") {
-    registry registry;
-    registry.add_singleton<ILogger, ConsoleLogger>();
-    // Target ConsoleLogger specifically
-    registry.decorate<ILogger, TimestampLogger>(typeid(ConsoleLogger));
-    // Replace removes ConsoleLogger, adds FileLogger
-    registry.add_singleton<ILogger, FileLogger>(registration_policy::replace);
-    auto resolver = registry.build();
-
-    auto logger = resolver->resolve<ILogger>();
-    // Targeted decorator for ConsoleLogger has no effect (ConsoleLogger gone)
-    REQUIRE(logger->Log("x") == "file:x");
-}
-
-TEST_CASE("Decorator: keyed registrations are also decorated", "[decorator]") {
-    registry registry;
-    registry.add_singleton<ILogger, ConsoleLogger>();
-    registry.add_singleton<ILogger, FileLogger>("file-key");
-    // Global decorator — applies to all ILogger descriptors including keyed
-    registry.decorate<ILogger, TimestampLogger>();
-    auto resolver = registry.build();
-
-    auto non_keyed = resolver->resolve<ILogger>();
-    auto keyed = resolver->resolve<ILogger>("file-key");
-    REQUIRE(non_keyed->Log("a") == "[TIME]console:a");
-    REQUIRE(keyed->Log("b") == "[TIME]file:b");
-}
-
-TEST_CASE("Decorator: wraps forward descriptor", "[decorator]") {
-    // forward<ILogger, ConsoleLogger> creates a descriptor for ILogger.
-    // Decorating ILogger should also wrap the forward descriptor.
-    registry registry;
-    registry.add_singleton<ConsoleLogger, ConsoleLogger>();
-    registry.forward<ILogger, ConsoleLogger>();
-    registry.decorate<ILogger, TimestampLogger>();
-    auto resolver = registry.build();
-
-    auto logger = resolver->resolve<ILogger>();
-    REQUIRE(logger->Log("hi") == "[TIME]console:hi");
+    REQUIRE(r->get<IService>().name() == "CFG:real");
 }

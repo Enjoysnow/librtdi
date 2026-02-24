@@ -31,13 +31,17 @@ public:
     not_found(std::type_index type, std::string_view key,
               std::source_location loc = std::source_location::current());
 
+    /// Construct with an additional diagnostic hint (appended to the message).
+    not_found(std::type_index type, std::string_view key,
+              std::string_view hint,
+              std::source_location loc = std::source_location::current());
+
     std::type_index component_type() const noexcept { return component_type_; }
 
 private:
     std::type_index component_type_;
 };
 
-// Thrown when a cyclic dependency is detected
 class cyclic_dependency : public di_error {
 public:
     explicit cyclic_dependency(const std::vector<std::type_index>& cycle,
@@ -47,11 +51,9 @@ public:
 
 private:
     std::vector<std::type_index> cycle_;
-
     static std::string build_message(const std::vector<std::type_index>& cycle);
 };
 
-// Thrown when lifetime rules are violated (e.g. Singleton depends on Scoped)
 class lifetime_mismatch : public di_error {
 public:
     lifetime_mismatch(std::type_index consumer, std::string_view consumer_lifetime,
@@ -69,19 +71,6 @@ private:
                                      std::type_index dependency, std::string_view dep_lt);
 };
 
-// Thrown when trying to resolve a Scoped component from the root resolver
-class no_active_scope : public di_error {
-public:
-    explicit no_active_scope(std::type_index type,
-                             std::source_location loc = std::source_location::current());
-
-    std::type_index component_type() const noexcept { return component_type_; }
-
-private:
-    std::type_index component_type_;
-};
-
-// Thrown when registration_policy::single is violated
 class duplicate_registration : public di_error {
 public:
     explicit duplicate_registration(std::type_index type,
@@ -96,26 +85,10 @@ private:
     std::type_index component_type_;
 };
 
-// Thrown when a factory throws during resolution, wrapping the original exception
 class resolution_error : public di_error {
 public:
     resolution_error(std::type_index type, const std::exception& inner,
                      std::source_location loc = std::source_location::current());
-
-    std::type_index component_type() const noexcept { return component_type_; }
-
-private:
-    std::type_index component_type_;
-};
-
-// Thrown when resolve<T>() finds multiple registrations for T
-class ambiguous_component : public di_error {
-public:
-    explicit ambiguous_component(std::type_index type,
-                                 std::source_location loc = std::source_location::current());
-
-    ambiguous_component(std::type_index type, std::string_view key,
-                        std::source_location loc = std::source_location::current());
 
     std::type_index component_type() const noexcept { return component_type_; }
 

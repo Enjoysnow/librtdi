@@ -1,214 +1,132 @@
 #include <catch2/catch_test_macros.hpp>
 #include <librtdi.hpp>
-#include <memory>
-#include <string>
 
-using namespace librtdi;
-
-// ---------------------------------------------------------------
-// Test interfaces
-// ---------------------------------------------------------------
-
-struct IDatabase {
-    virtual ~IDatabase() = default;
-    virtual std::string Name() const = 0;
-};
-
-struct SqliteDb : IDatabase {
-    std::string Name() const override { return "sqlite"; }
-};
-
-struct PostgresDb : IDatabase {
-    std::string Name() const override { return "postgres"; }
-};
-
-struct MySqlDb : IDatabase {
-    std::string Name() const override { return "mysql"; }
-};
-
-struct ICache {
-    virtual ~ICache() = default;
-    virtual std::string Type() const = 0;
-};
-
-struct RedisCache : ICache {
-    std::string Type() const override { return "redis"; }
-};
-
-struct MemoryCache : ICache {
-    std::string Type() const override { return "memory"; }
-};
+namespace {
 
 struct IService {
     virtual ~IService() = default;
-    virtual std::string DbName() const = 0;
+    virtual int value() const = 0;
 };
 
-struct ServiceUsingDb : IService {
-    std::shared_ptr<IDatabase> db_;
-    explicit ServiceUsingDb(std::shared_ptr<IDatabase> db) : db_(std::move(db)) {}
-    std::string DbName() const override { return db_->Name(); }
+struct DefaultService : IService {
+    int value() const override { return 0; }
 };
 
-// ---------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------
+struct ServiceA : IService {
+    int value() const override { return 1; }
+};
 
-TEST_CASE("Keyed: resolve by key returns correct implementation", "[keyed]") {
-    registry registry;
-    registry.add_singleton<IDatabase, SqliteDb>("local");
-    registry.add_singleton<IDatabase, PostgresDb>("remote");
-    auto resolver = registry.build();
+struct ServiceB : IService {
+    int value() const override { return 2; }
+};
 
-    auto local = resolver->resolve<IDatabase>("local");
-    auto remote = resolver->resolve<IDatabase>("remote");
-    REQUIRE(local->Name() == "sqlite");
-    REQUIRE(remote->Name() == "postgres");
+} // namespace
+
+TEST_CASE("keyed singleton registration and resolution", "[keyed]") {
+    librtdi::registry reg;
+    reg.add_singleton<IService, ServiceA>("a");
+    reg.add_singleton<IService, ServiceB>("b");
+    auto r = reg.build({.validate_on_build = false});
+
+    REQUIRE(r->get<IService>("a").value() == 1);
+    REQUIRE(r->get<IService>("b").value() == 2);
 }
 
-TEST_CASE("Keyed: different keys are independent instances", "[keyed]") {
-    registry registry;
-    registry.add_singleton<IDatabase, SqliteDb>("a");
-    registry.add_singleton<IDatabase, SqliteDb>("b");
-    auto resolver = registry.build();
+TEST_CASE("keyed and non-keyed coexist", "[keyed]") {
+    librtdi::registry reg;
+    reg.add_singleton<IService, DefaultService>();
+    reg.add_singleton<IService, ServiceA>("a");
+    auto r = reg.build({.validate_on_build = false});
 
-    auto a = resolver->resolve<IDatabase>("a");
-    auto b = resolver->resolve<IDatabase>("b");
-    // Different singletons for different keys
-    REQUIRE(a.get() != b.get());
+    REQUIRE(r->get<IService>().value() == 0);
+    REQUIRE(r->get<IService>("a").value() == 1);
 }
 
-TEST_CASE("Keyed: try_resolve returns nullptr for missing key", "[keyed]") {
-    registry registry;
-    registry.add_singleton<IDatabase, SqliteDb>("existing");
-    auto resolver = registry.build();
+TEST_CASE("keyed try_get returns nullptr if key not found", "[keyed]") {
+    librtdi::registry reg;
+    reg.add_singleton<IService, ServiceA>("a");
+    auto r = reg.build({.validate_on_build = false});
 
-    auto svc = resolver->try_resolve<IDatabase>("nonexistent");
-    REQUIRE(svc == nullptr);
+    REQUIRE(r->try_get<IService>("nonexistent") == nullptr);
 }
 
-TEST_CASE("Keyed: resolve throws for missing key", "[keyed]") {
-    registry registry;
-    registry.add_singleton<IDatabase, SqliteDb>("existing");
-    auto resolver = registry.build();
-
+TEST_CASE("keyed duplicate throws", "[keyed]") {
+    librtdi::registry reg;
+    reg.add_singleton<IService, ServiceA>("x");
     REQUIRE_THROWS_AS(
-        resolver->resolve<IDatabase>("nonexistent"),
-        not_found);
+        (reg.add_singleton<IService, ServiceB>("x")),
+        librtdi::duplicate_registration);
 }
 
-TEST_CASE("Keyed: resolve_all with key returns all for that key", "[keyed]") {
-    registry registry;
-    registry.add_singleton<IDatabase, SqliteDb>("primary");
-    registry.add_singleton<IDatabase, PostgresDb>("primary");
-    registry.add_singleton<IDatabase, MySqlDb>("secondary");
-    auto resolver = registry.build();
+TEST_CASE("keyed transient", "[keyed]") {
+    librtdi::registry reg;
+    reg.add_transient<IService, ServiceA>("a");
+    reg.add_transient<IService, ServiceB>("b");
+    auto r = reg.build({.validate_on_build = false});
 
-    auto primary = resolver->resolve_all<IDatabase>("primary");
-    REQUIRE(primary.size() == 2);
-    REQUIRE(primary[0]->Name() == "sqlite");
-    REQUIRE(primary[1]->Name() == "postgres");
+    auto a1 = r->create<IService>("a");
+    auto a2 = r->create<IService>("a");
+    REQUIRE(a1->value() == 1);
+    REQUIRE(a2->value() == 1);
+    REQUIRE(a1.get() != a2.get());
 
-    auto secondary = resolver->resolve_all<IDatabase>("secondary");
-    REQUIRE(secondary.size() == 1);
-    REQUIRE(secondary[0]->Name() == "mysql");
+    auto b = r->create<IService>("b");
+    REQUIRE(b->value() == 2);
 }
 
-TEST_CASE("Keyed: keyed and non-keyed coexist independently", "[keyed]") {
-    registry registry;
-    registry.add_singleton<IDatabase, SqliteDb>();           // non-keyed
-    registry.add_singleton<IDatabase, PostgresDb>("backup"); // keyed
-    auto resolver = registry.build();
+TEST_CASE("keyed singleton identity", "[keyed]") {
+    librtdi::registry reg;
+    reg.add_singleton<IService, ServiceA>("a");
+    auto r = reg.build({.validate_on_build = false});
 
-    auto def = resolver->resolve<IDatabase>();
-    auto backup = resolver->resolve<IDatabase>("backup");
-    REQUIRE(def->Name() == "sqlite");
-    REQUIRE(backup->Name() == "postgres");
-
-    // Non-keyed resolve_all should NOT include keyed
-    auto all_default = resolver->resolve_all<IDatabase>();
-    REQUIRE(all_default.size() == 1);
-    REQUIRE(all_default[0]->Name() == "sqlite");
+    auto& a1 = r->get<IService>("a");
+    auto& a2 = r->get<IService>("a");
+    REQUIRE(&a1 == &a2);
 }
 
-TEST_CASE("Keyed: singleton lifetime per key", "[keyed]") {
-    registry registry;
-    registry.add_singleton<IDatabase, SqliteDb>("k1");
-    auto resolver = registry.build();
+// ---------------------------------------------------------------
+// Keyed collection registration and resolution
+// ---------------------------------------------------------------
 
-    auto a = resolver->resolve<IDatabase>("k1");
-    auto b = resolver->resolve<IDatabase>("k1");
-    REQUIRE(a.get() == b.get());
+TEST_CASE("keyed singleton collection", "[keyed]") {
+    librtdi::registry reg;
+    reg.add_collection<IService, ServiceA>("group1", librtdi::lifetime_kind::singleton);
+    reg.add_collection<IService, ServiceB>("group1", librtdi::lifetime_kind::singleton);
+    auto r = reg.build({.validate_on_build = false});
+
+    auto all = r->get_all<IService>("group1");
+    REQUIRE(all.size() == 2);
+
+    // Non-keyed should be empty
+    auto non_keyed = r->get_all<IService>();
+    REQUIRE(non_keyed.empty());
 }
 
-TEST_CASE("Keyed: scoped lifetime per key per scope", "[keyed]") {
-    registry registry;
-    registry.add_scoped<IDatabase, SqliteDb>("k1");
-    auto resolver = registry.build();
+TEST_CASE("keyed transient collection", "[keyed]") {
+    librtdi::registry reg;
+    reg.add_collection<IService, ServiceA>("pool", librtdi::lifetime_kind::transient);
+    reg.add_collection<IService, ServiceB>("pool", librtdi::lifetime_kind::transient);
+    auto r = reg.build({.validate_on_build = false});
 
-    auto scope1 = resolver->create_scope();
-    auto scope2 = resolver->create_scope();
-
-    auto a = scope1->get_resolver().resolve<IDatabase>("k1");
-    auto b = scope1->get_resolver().resolve<IDatabase>("k1");
-    auto c = scope2->get_resolver().resolve<IDatabase>("k1");
-
-    REQUIRE(a.get() == b.get());  // same scope → same instance
-    REQUIRE(a.get() != c.get());  // different scope → different instance
+    auto all1 = r->create_all<IService>("pool");
+    auto all2 = r->create_all<IService>("pool");
+    REQUIRE(all1.size() == 2);
+    REQUIRE(all2.size() == 2);
+    REQUIRE(all1[0].get() != all2[0].get());
 }
 
-TEST_CASE("Keyed: transient lifetime per key", "[keyed]") {
-    registry registry;
-    registry.add_transient<IDatabase, SqliteDb>("k1");
-    auto resolver = registry.build();
+TEST_CASE("keyed get throws not_found for wrong key", "[keyed]") {
+    librtdi::registry reg;
+    reg.add_singleton<IService, ServiceA>("x");
+    auto r = reg.build({.validate_on_build = false});
 
-    auto scope = resolver->create_scope();
-    auto a = scope->get_resolver().resolve<IDatabase>("k1");
-    auto b = scope->get_resolver().resolve<IDatabase>("k1");
-    REQUIRE(a.get() != b.get());
+    REQUIRE_THROWS_AS(r->get<IService>("y"), librtdi::not_found);
 }
 
-TEST_CASE("Keyed: deps<> with keyed registration", "[keyed]") {
-    registry registry;
-    registry.add_singleton<IDatabase, PostgresDb>("primary");
-    // ServiceUsingDb depends on IDatabase (non-keyed)
-    registry.add_singleton<IDatabase, SqliteDb>();
-    registry.add_singleton<IService, ServiceUsingDb>(deps<IDatabase>);
-    auto resolver = registry.build();
+TEST_CASE("keyed create throws not_found for wrong key", "[keyed]") {
+    librtdi::registry reg;
+    reg.add_transient<IService, ServiceA>("x");
+    auto r = reg.build({.validate_on_build = false});
 
-    // Non-keyed IDatabase used for deps<>
-    auto svc = resolver->resolve<IService>();
-    REQUIRE(svc->DbName() == "sqlite");
-}
-
-TEST_CASE("Keyed: validation detects missing keyed dependency", "[keyed][validation]") {
-    registry registry;
-    // register_component IDatabase under key "special" but
-    // ServiceUsingDb depends on non-keyed IDatabase
-    registry.add_singleton<IDatabase, SqliteDb>("special");
-    registry.add_singleton<IService, ServiceUsingDb>(deps<IDatabase>);
-
-    // Non-keyed IDatabase is missing → validation should catch it
-    REQUIRE_THROWS_AS(
-        registry.build(),
-        not_found);
-}
-
-TEST_CASE("Keyed: resolve_any returns last for keyed", "[keyed]") {
-    registry registry;
-    registry.add_singleton<IDatabase, SqliteDb>("db");
-    registry.add_singleton<IDatabase, PostgresDb>("db");
-    auto resolver = registry.build();
-
-    auto db = resolver->resolve_any<IDatabase>("db");
-    REQUIRE(db->Name() == "postgres");  // last-wins
-}
-
-TEST_CASE("Keyed: try_resolve_any returns nullptr for missing key", "[keyed]") {
-    registry registry;
-    registry.add_singleton<IDatabase, SqliteDb>("existing");
-    auto resolver = registry.build();
-
-    auto db = resolver->try_resolve_any<IDatabase>("nonexistent");
-    REQUIRE(db == nullptr);
+    REQUIRE_THROWS_AS(r->create<IService>("y"), librtdi::not_found);
 }

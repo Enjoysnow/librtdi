@@ -1,7 +1,6 @@
 add_library(librtdi STATIC
     registry.cpp
     resolver.cpp
-    scope.cpp
     validation.cpp
     exceptions.cpp
 )
@@ -33,4 +32,10 @@ install(
     TARGETS librtdi
     EXPORT  librtdi-targets
     ARCHIVE DESTINATION lib
+)
+
+install(
+    EXPORT librtdi-targets
+    DESTINATION lib/cmake/librtdi
+    NAMESPACE librtdi::
 )

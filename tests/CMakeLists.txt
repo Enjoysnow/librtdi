@@ -7,7 +7,6 @@ set(TEST_SOURCES
     test_registration.cpp
     test_resolution.cpp
     test_lifetime.cpp
-    test_scope.cpp
     test_multi_impl.cpp
     test_validation.cpp
     test_diagnostics.cpp
@@ -15,9 +14,9 @@ set(TEST_SOURCES
     test_auto_wiring.cpp
     test_edge_cases.cpp
     test_keyed.cpp
-    test_policy.cpp
     test_forward.cpp
     test_decorator.cpp
+    test_inheritance.cpp
 )
 
 add_executable(librtdi_tests ${TEST_SOURCES})
