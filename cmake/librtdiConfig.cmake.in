@@ -2,3 +2,7 @@
 
 include("${CMAKE_CURRENT_LIST_DIR}/librtdi-targets.cmake")
 check_required_components(librtdi)
+
+# Usage:
+#   find_package(librtdi CONFIG REQUIRED)
+#   target_link_libraries(my_app PRIVATE librtdi::librtdi)

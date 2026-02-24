@@ -1,18 +1,18 @@
-# librtdi – C++20 运行时依赖注入框架
+# librtdi -- C++20 Runtime Dependency Injection Framework
 
-`librtdi` 是一个参考 .NET `Microsoft.Extensions.DependencyInjection` 设计语义的 C++20 DI/IoC 框架，提供：
+`librtdi` is a C++20 DI/IoC framework inspired by .NET `Microsoft.Extensions.DependencyInjection`, featuring:
 
-- 运行时类型擦除（`erased_ptr` + `type_index`）
-- 零宏依赖声明（`deps<>`）
-- 生命周期管理（`singleton` / `transient`）
-- 四槽位模型（单实例 + 集合 × singleton + transient）
-- 多实现、keyed 注册、forward、decorator
-- `build()` 阶段校验（缺失依赖、循环依赖、生命周期违规）
-- 多重继承与虚拟继承支持
+- Runtime type erasure (`erased_ptr` + `type_index`)
+- Zero-macro dependency declaration (`deps<>`)
+- Lifetime management (`singleton` / `transient`)
+- Four-slot model (single-instance + collection x singleton + transient)
+- Multi-implementation, keyed registration, forward, decorator
+- `build()`-time validation (missing deps, cycles, lifetime violations)
+- Multiple and virtual inheritance support
 
-## 快速开始
+## Quick Start
 
-### 最小示例
+### Minimal Example
 
 ```cpp
 #include <librtdi.hpp>
@@ -34,11 +34,11 @@ int main() {
     reg.add_singleton<IGreeter, ConsoleGreeter>();
 
     auto r = reg.build();
-    r->get<IGreeter>().greet();  // 返回 IGreeter&
+    r->get<IGreeter>().greet();  // returns IGreeter&
 }
 ```
 
-### 带依赖的注册（`deps<>`）
+### Registration with Dependencies (`deps<>`)
 
 ```cpp
 struct ILogger {
@@ -57,7 +57,7 @@ struct IService {
     virtual void run() = 0;
 };
 
-// 依赖通过构造函数引用注入
+// Dependencies are injected via constructor reference
 struct MyService : IService {
     ILogger& logger_;
     explicit MyService(ILogger& logger) : logger_(logger) {}
@@ -70,77 +70,77 @@ int main() {
     reg.add_singleton<ILogger, ConsoleLogger>();
     reg.add_singleton<IService, MyService>(deps<ILogger>);
     //                                     ^^^^^^^^^^^
-    //  deps<ILogger> → 注入 ILogger&（singleton 引用）
+    //  deps<ILogger> -> injects ILogger& (singleton reference)
 
     auto r = reg.build();
     r->get<IService>().run();
 }
 ```
 
-## 核心概念
+## Core Concepts
 
-### 生命周期
+### Lifetimes
 
-| 枚举值 | 含义 | 解析 API |
-|--------|------|----------|
-| `singleton` | 全局唯一，首次解析时懒创建 | `get<T>()` → `T&` |
-| `transient` | 每次解析创建新实例 | `create<T>()` → `unique_ptr<T>` |
+| Enum | Meaning | Resolution API |
+|------|---------|----------------|
+| `singleton` | Global unique, lazily created on first resolve | `get<T>()` returns `T&` |
+| `transient` | New instance on every resolve | `create<T>()` returns `unique_ptr<T>` |
 
-### 四槽位模型
+### Four-Slot Model
 
-同一 `(type, key)` 可拥有最多 4 个独立槽位：
+Each `(type, key)` pair can have up to 4 independent slots:
 
-| 槽位 | 注册方法 | 注入类型 |
-|------|----------|----------|
-| 单例单实例 | `add_singleton<I,T>()` | `T&` |
-| 瞬态单实例 | `add_transient<I,T>()` | `unique_ptr<T>` |
-| 单例集合 | `add_collection<I,T>(singleton)` | `vector<T*>` |
-| 瞬态集合 | `add_collection<I,T>(transient)` | `vector<unique_ptr<T>>` |
+| Slot | Registration Method | Injection Type |
+|------|---------------------|----------------|
+| Singleton single | `add_singleton<I,T>()` | `T&` |
+| Transient single | `add_transient<I,T>()` | `unique_ptr<T>` |
+| Singleton collection | `add_collection<I,T>(lifetime_kind::singleton)` | `vector<T*>` |
+| Transient collection | `add_collection<I,T>(lifetime_kind::transient)` | `vector<unique_ptr<T>>` |
 
-### 依赖标记
+### Dependency Tags
 
-`deps<>` 中每个类型参数决定注入方式：
+Each type parameter in `deps<>` determines the injection style:
 
-| 标记 | 注入类型 | 解析方法 |
-|------|----------|----------|
+| Tag | Injection Type | Resolver Method |
+|-----|----------------|-----------------|
 | `T` / `singleton<T>` | `T&` | `get<T>()` |
 | `transient<T>` | `unique_ptr<T>` | `create<T>()` |
 | `collection<T>` | `vector<T*>` | `get_all<T>()` |
 | `collection<transient<T>>` | `vector<unique_ptr<T>>` | `create_all<T>()` |
 
-## 注册 API
+## Registration API
 
-### 单实例注册
+### Single-Instance Registration
 
 ```cpp
 using namespace librtdi;
 registry reg;
 
-// 无依赖 singleton
+// Zero-dep singleton
 reg.add_singleton<IFoo, FooImpl>();
 
-// 带依赖 singleton
+// Singleton with dependencies
 reg.add_singleton<IBar, BarImpl>(deps<IFoo, transient<IBaz>>);
 
-// 无依赖 transient
+// Zero-dep transient
 reg.add_transient<IFoo, FooImpl>();
 
-// 带依赖 transient
+// Transient with dependencies
 reg.add_transient<IBar, BarImpl>(deps<IFoo>);
 ```
 
-### 集合注册
+### Collection Registration
 
 ```cpp
-// 多个实现注册到同一接口（集合槽位，可自由追加）
+// Multiple implementations registered to the same interface (freely appendable)
 reg.add_collection<IPlugin, PluginA>(lifetime_kind::singleton);
 reg.add_collection<IPlugin, PluginB>(lifetime_kind::singleton);
 
-// 消费方通过 collection<IPlugin> 获取所有实现
+// Consumer receives all implementations via collection<IPlugin>
 reg.add_singleton<PluginManager, PluginManager>(deps<collection<IPlugin>>);
 ```
 
-### Keyed 注册
+### Keyed Registration
 
 ```cpp
 reg.add_singleton<ICache, RedisCache>("redis");
@@ -151,164 +151,188 @@ auto& redis = r->get<ICache>("redis");
 auto& mem   = r->get<ICache>("memory");
 ```
 
-### 转发注册（Forward）
+### Forward Registration
+
+Expose one implementation through multiple interfaces; singletons share the same instance:
 
 ```cpp
-struct Impl : IA, IB { /* ... */ };
+struct Impl : IA, IB {
+    Impl() = default;
+};
 
-reg.add_singleton<
-reg.forward<IA, Impl>();  // IA 的 singleton 共享 Impl 的实例
-reg.forward<IB, Impl>();  // IB 同上
+reg.add_singleton<Impl, Impl>();
+reg.forward<IA, Impl>();  // IA singleton shares Impl's instance
+reg.forward<IB, Impl>();  // IB likewise
+
+auto r = reg.build();
+auto& a = r->get<IA>();   // same underlying object as get<Impl>()
+auto& b = r->get<IB>();   // same underlying object as get<Impl>()
 ```
 
-### 装饰器（Decorator）
+### Decorator
+
+Transparently wrap registered implementations with additional logic:
 
 ```cpp
 struct LoggingFoo : IFoo {
     std::unique_ptr<IFoo> inner_;
-    explicit Loggi
-        : inner_(std::move(inner))
+    explicit LoggingFoo(std::unique_ptr<IFoo> inner)
+        : inner_(std::move(inner)) {}
+
     void do_something() override {
         std::cout << "before\n";
         inner_->do_something();
-        std::cout 
+        std::cout << "after\n";
     }
 };
 
 reg.add_singleton<IFoo, FooImpl>();
 reg.decorate<IFoo, LoggingFoo>();
+
+// Type-safe targeted decoration (compile-time check that TTarget derives from I)
+reg.decorate_target<IFoo, LoggingFoo, FooImpl>();
 ```
 
-## 解析 API
+Multiple decorators stack in registration order: first registered is innermost, last is outermost.
+
+## Resolution API
 
 ```cpp
-auto r = reg.build()
+auto r = reg.build();
 
-// Singleton（引用生命周期�
+// Singleton (reference, lifetime bound to resolver)
+auto& svc = r->get<IFoo>();           // IFoo&, throws not_found if unregistered
+auto* ptr = r->try_get<IFoo>();       // IFoo* or nullptr
 
-auto* ptr = r->
+// Transient (ownership transferred to caller)
+auto obj = r->create<IBar>();         // unique_ptr<IBar>, throws not_found if unregistered
+auto opt = r->try_create<IBar>();     // unique_ptr<IBar> or empty
 
-// Transient
-auto
-auto opt = r->try_create<IBar>();    // unique_ptr<IBar> 或空
+// Collections
+auto all  = r->get_all<IPlugin>();    // vector<IPlugin*> (singleton collection)
+auto allT = r->create_all<IPlugin>(); // vector<unique_ptr<IPlugin>> (transient collection)
 
-// 
-auto all  = r->get_all<IPlugin>();       // vector<IPlugin*>
-auto allT
+// Keyed variants
+auto& redis = r->get<ICache>("redis");
+auto conn   = r->create<IConnection>("primary");
 ```
 
-## 构建期校验
+## Build-Time Validation
 
-`build()` 在构建 resolver 前自动执行校验：
+`build()` automatically validates before creating the resolver:
 
 ```cpp
-auto r = reg.build();  // 默认�
+auto r = reg.build();  // all validations enabled by default
 ```
 
-可选控制：
+Optional controls:
 
 ```cpp
 auto r = reg.build({
-    .validate_on_build  = true,   // 总开关
-    .validate_lifetimes = true,   // 检查 captive dependency
-    .detect_cycles      = true,   // 检查循环依赖
+    .validate_on_build  = true,   // master switch
+    .validate_lifetimes = true,   // check captive dependency
+    .detect_cycles      = true,   // check circular dependencies
 });
 ```
 
-校验顺序：缺失依赖 → 生命周期兼容性 → 循环依赖。
+Validation order: missing dependencies, then lifetime compatibility, then cycle detection.
 
-## 继承模型
+## Inheritance Model
 
-librtdi 支持所有 
+librtdi supports all C++ inheritance forms:
 
-| 继承模型 | 支持 | 说明
-|----------|------|------|
-| 单继承 | ✓ | 标准场景 |
-| 多重继承 | ✓ | 通过 `make_erase
-| �
-| 菱形继承 | 
+| Inheritance | Supported | Notes |
+|-------------|-----------|-------|
+| Single | Yes | Standard scenario |
+| Multiple | Yes | Pointer offset handled automatically via `make_erased_as<TInterface, TImpl>()` |
+| Virtual | Yes | Upcast `static_cast` (derived to base) is legal for virtual inheritance |
+| Diamond | Yes | Used in combination with virtual inheritance |
 
-**要求**：当 `TInterface != T
+**Requirement**: When `TInterface != TImpl`, `TInterface` must have a virtual destructor (enforced by compile-time `static_assert`).
 
-## 异常体系
+## Exception Hierarchy
 
 ```
 std::runtime_error
-  └─ di_error                     ← 所有 DI 异常的基类
-       ├─ not_found               ← 未找到注册
-       ├─ cyclic_dependency       ← 循环依赖
-       ├─ lifetime_mismatch       ← 生命周期违规
-       ├─ dup
-       └─ resolution_error        ← 工厂执行时异常的包装
+  +-- di_error                     <-- base for all DI exceptions
+       +-- not_found               <-- no registration found
+       +-- cyclic_dependency       <-- circular dependency detected
+       +-- lifetime_mismatch       <-- lifetime violation (captive dependency)
+       +-- duplicate_registration  <-- duplicate single-instance slot registration
+       +-- resolution_error        <-- wraps factory exceptions
 ```
 
-所有异常消息均包含 demangled 类型名和源码位置。
+All exception messages include demangled type names and source location. `not_found` includes diagnostic hints when the type exists in a different slot (e.g., registered as transient but requested via `get<T>()`, suggesting `create<T>()` instead).
 
-## 线程安全
+## Thread Safety
 
-- **注册阶段**：`registry` 假定单线程使用
-- **解析阶段**：`resolver` 可多线程并发使用；singleton 通过 `recursive_mutex` 保证 once-per-descriptor 语义
+- **Registration phase**: `registry` assumes single-threaded use
+- **Resolution phase**: `resolver` is safe for concurrent multi-threaded use; singleton creation is protected by a `recursive_mutex` ensuring once-per-descriptor semantics
 
-## 构建
+## Building
 
 ```bash
 cmake -B build -G Ninja
-cm
+cmake --build build
 
-# 运行测试
+# Run tests
 ctest --test-dir build --output-on-failure
 
-# 打包
+# Package
 cmake --build build --target package
 ```
 
-### 下游集成
+### Downstream Integration
 
-安装后，通过标准 CMake �
+After installation, integrate via standard CMake `find_package`:
 
 ```cmake
 find_package(librtdi CONFIG REQUIRED)
 target_link_libraries(my_app PRIVATE librtdi::librtdi)
 ```
 
-## 完整示例
+## Full Example
 
-参见 [examples/basic_usage.cpp](examples/basic_usage.cpp)，演示了 singleton、deps 注入、集合、decorator 的组合使用。
+See [examples/basic_usage.cpp](examples/basic_usage.cpp) for a complete demo of singleton, deps injection, collections, and decorator composition.
 
-## 项目结构
+## Project Structure
 
 ```text
 librtdi/
 ├── CMakeLists.txt
 ├── README.md
 ├── REQUIREMENTS.md
-├── include/librtdi/
-│   ├── descriptor.hpp
-│   ├── exceptions.hpp
-│   ├── registry.hpp
-│   ├── resolver.hpp
-│   ├── scope.hpp
-│   └── type_traits.hpp
+├── cmake/
+│   ├── CompilerWarnings.cmake
+│   ├── Dependencies.cmake
+│   └── librtdiConfig.cmake.in
+├── include/
+│   ├── librtdi.hpp
+│   └── librtdi/
+│       ├── descriptor.hpp
+│       ├── exceptions.hpp
+│       ├── registry.hpp
+│       ├── resolver.hpp
+│       └── type_traits.hpp
 ├── src/
+│   ├── exceptions.cpp
 │   ├── registry.cpp
 │   ├── resolver.cpp
-│   ├── scope.cpp
-│   ├── validation.cpp
-│   └── exceptions.cpp
+│   └── validation.cpp
 ├── tests/
-│   ├── test_registration.cpp
-│   ├── test_resolution.cpp
+│   ├── test_auto_wiring.cpp
+│   ├── test_concurrency.cpp
+│   ├── test_decorator.cpp
+│   ├── test_diagnostics.cpp
+│   ├── test_edge_cases.cpp
+│   ├── test_forward.cpp
+│   ├── test_inheritance.cpp
+│   ├── test_keyed.cpp
 │   ├── test_lifetime.cpp
 │   ├── test_multi_impl.cpp
-│   ├── test_validation.cpp
-│   ├── test_diagnostics.cpp
-│   ├── test_concurrency.cpp
-│   ├── test_auto_wiring.cpp
-│   ├── test_edge_cases.cpp
-│   ├── test_keyed.cpp
-│   ├── test_forward.cpp
-│   ├── test_decorator.cpp
-│   └── test_inheritance.cpp
+│   ├── test_registration.cpp
+│   ├── test_resolution.cpp
+│   └── test_validation.cpp
 └── examples/
     └── basic_usage.cpp
 ```
