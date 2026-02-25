@@ -1,4 +1,4 @@
-add_library(librtdi STATIC
+add_library(librtdi SHARED
     registry.cpp
     resolver.cpp
     validation.cpp
@@ -32,6 +32,7 @@ if(LIBRTDI_ENABLE_INSTALL)
     install(
         TARGETS librtdi
         EXPORT  librtdi-targets
+        LIBRARY DESTINATION lib
         ARCHIVE DESTINATION lib
     )
 
