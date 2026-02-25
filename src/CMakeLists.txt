@@ -28,14 +28,16 @@ if(LIBRTDI_ENABLE_SANITIZERS)
     librtdi_apply_sanitizers(librtdi)
 endif()
 
-install(
-    TARGETS librtdi
-    EXPORT  librtdi-targets
-    ARCHIVE DESTINATION lib
-)
+if(LIBRTDI_ENABLE_INSTALL)
+    install(
+        TARGETS librtdi
+        EXPORT  librtdi-targets
+        ARCHIVE DESTINATION lib
+    )
 
-install(
-    EXPORT librtdi-targets
-    DESTINATION lib/cmake/librtdi
-    NAMESPACE librtdi::
-)
+    install(
+        EXPORT librtdi-targets
+        DESTINATION lib/cmake/librtdi
+        NAMESPACE librtdi::
+    )
+endif()

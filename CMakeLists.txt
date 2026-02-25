@@ -9,9 +9,6 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-# Generate compile_commands.json for clangd / LSP tooling
-set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
-
 # Pull in helper functions (compiler warnings, sanitizers)
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 include(CompilerWarnings)
@@ -19,7 +16,9 @@ include(CompilerWarnings)
 option(BUILD_TESTS              "Build unit tests"                                         ON)
 option(LIBRTDI_BUILD_EXAMPLES   "Build example programs"                                   OFF)
 option(LIBRTDI_ENABLE_WARNINGS  "Enable strict compiler warnings"                          ON)
-option(LIBRTDI_ENABLE_SANITIZERS "Enable ASan + UBSan (GCC/Clang) / ASan (MSVC)"          OFF)
+option(LIBRTDI_ENABLE_SANITIZERS "Enable ASan + UBSan (GCC/Clang) / ASan (MSVC)"           OFF)
+option(LIBRTDI_ENABLE_INSTALL   "Enable installation rules"                                ON)
+option(LIBRTDI_ENABLE_PACKAGE   "Enable CPack packaging"                                   ON)
 
 add_subdirectory(src)
 
@@ -35,50 +34,54 @@ endif()
 # -----------------------------------------------------------------------
 # Install rules
 # -----------------------------------------------------------------------
-install(
-    DIRECTORY include/
-    DESTINATION include
-    FILES_MATCHING PATTERN "*.hpp"
-)
+if(LIBRTDI_ENABLE_INSTALL)
+    install(
+        DIRECTORY include/
+        DESTINATION include
+        FILES_MATCHING PATTERN "*.hpp"
+    )
 
-# Generate CMake package config files for find_package(librtdi)
-include(CMakePackageConfigHelpers)
+    # Generate CMake package config files for find_package(librtdi)
+    include(CMakePackageConfigHelpers)
 
-configure_package_config_file(
-    "${CMAKE_CURRENT_SOURCE_DIR}/cmake/librtdiConfig.cmake.in"
-    "${CMAKE_CURRENT_BINARY_DIR}/librtdiConfig.cmake"
-    INSTALL_DESTINATION lib/cmake/librtdi
-)
-
-write_basic_package_version_file(
-    "${CMAKE_CURRENT_BINARY_DIR}/librtdiConfigVersion.cmake"
-    VERSION ${PROJECT_VERSION}
-    COMPATIBILITY SameMajorVersion
-)
-
-install(
-    FILES
+    configure_package_config_file(
+        "${CMAKE_CURRENT_SOURCE_DIR}/cmake/librtdiConfig.cmake.in"
         "${CMAKE_CURRENT_BINARY_DIR}/librtdiConfig.cmake"
+        INSTALL_DESTINATION lib/cmake/librtdi
+    )
+
+    write_basic_package_version_file(
         "${CMAKE_CURRENT_BINARY_DIR}/librtdiConfigVersion.cmake"
-    DESTINATION lib/cmake/librtdi
-)
+        VERSION ${PROJECT_VERSION}
+        COMPATIBILITY SameMajorVersion
+    )
+
+    install(
+        FILES
+            "${CMAKE_CURRENT_BINARY_DIR}/librtdiConfig.cmake"
+            "${CMAKE_CURRENT_BINARY_DIR}/librtdiConfigVersion.cmake"
+        DESTINATION lib/cmake/librtdi
+    )
+endif()
 
 # -----------------------------------------------------------------------
 # CPack packaging
 # -----------------------------------------------------------------------
-set(CPACK_PACKAGE_NAME              "librtdi")
-set(CPACK_PACKAGE_VERSION           ${PROJECT_VERSION})
-set(CPACK_PACKAGE_DESCRIPTION_SUMMARY ${PROJECT_DESCRIPTION})
-set(CPACK_PACKAGE_CONTACT           "librtdi contributors")
+if(LIBRTDI_ENABLE_PACKAGE)
+    set(CPACK_PACKAGE_NAME              "librtdi")
+    set(CPACK_PACKAGE_VERSION           ${PROJECT_VERSION})
+    set(CPACK_PACKAGE_DESCRIPTION_SUMMARY ${PROJECT_DESCRIPTION})
+    set(CPACK_PACKAGE_CONTACT           "librtdi contributors")
 
-if(WIN32)
-    set(CPACK_GENERATOR "ZIP")
-elseif(APPLE)
-    set(CPACK_GENERATOR "TBZ2")
-else()
-    set(CPACK_GENERATOR "TGZ;DEB")
-    set(CPACK_DEBIAN_PACKAGE_ARCHITECTURE "amd64")
-    set(CPACK_DEBIAN_PACKAGE_SECTION      "devel")
+    if(WIN32)
+        set(CPACK_GENERATOR "ZIP")
+    elseif(APPLE)
+        set(CPACK_GENERATOR "TBZ2")
+    else()
+        set(CPACK_GENERATOR "TGZ;DEB")
+        set(CPACK_DEBIAN_PACKAGE_ARCHITECTURE "amd64")
+        set(CPACK_DEBIAN_PACKAGE_SECTION      "devel")
+    endif()
+
+    include(CPack)
 endif()
-
-include(CPack)
