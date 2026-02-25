@@ -1,6 +1,6 @@
 # librtdi -- C++20 Runtime Dependency Injection Framework
 
-`librtdi` is a C++20 DI/IoC framework inspired by .NET `Microsoft.Extensions.DependencyInjection`, featuring:
+`librtdi` is a C++20 DI/IoC framework inspired by .NET `Microsoft.Extensions.DependencyInjection` and Google `fruit`, featuring:
 
 - Runtime type erasure (`erased_ptr` + `type_index`)
 - Zero-macro dependency declaration (`deps<>`)
