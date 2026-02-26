@@ -1,7 +1,7 @@
 # 需求规格说明书
 
 **项目名称**：librtdi — C++20 运行时依赖注入框架（MVP）  
-**文档版本**：2.3  
+**文档版本**：2.6  
 **语言**：C++20  
 **最后更新**：2026-02-26
 
@@ -193,7 +193,7 @@ registry 提供以下注册方法，所有方法均返回 `registry&`（支持�
 
 - 工厂在解析时被调用，接收当前激活的 `resolver`
 - 工厂返回类型擦除的 `erased_ptr`；框架在类型安全边界处通过 `static_cast<T*>` 恢复类型
-- 工厂执行时若抛出异常：若异常属于 `di_error` 子类（如 `not_found`），框架直接透传不做二次包装；其他 `std::exception` 子类则包装为 `resolution_error` 再向上传播
+- 工厂执行时若抛出异常：若异常属于 `di_error` 子类（如 `not_found`），框架直接透传不做二次包装；其他 `std::exception` 子类则包装为 `resolution_error` 再向上传播；非 `std::exception` 的异常原样透传，不做任何包装
 
 ### 4.4 单实例槽位唯一性
 
@@ -499,7 +499,7 @@ forward singleton），调用其工厂函数完成实例化。
 
 - 根据 `(dep.type, dep.is_transient ? transient : singleton, dep.is_collection)` 确定所需槽位
 - 检查该槽位是否存在至少一条注册
-- 若不存在，抛 `not_found(dep.type)`
+- 若不存在，抛 `not_found(dep.type)`，**消息中包含要求此依赖的消费者类型名**（`required by ConsumerType`）、消费者的 impl 类型名（若存在）、消费者的生命周期以及注册位置
 
 ### 10.5 生命周期兼容性检查（captive dependency 检测）
 
@@ -541,18 +541,39 @@ std::runtime_error
 
 | 异常 | 必须携带 |
 |------|----------|
-| `di_error`（基类） | 消息字符串；`std::source_location`（抛出点） |
-| `not_found` | `type_index`（未找到的类型）；可选 key 字符串 |
+| `di_error`（基类） | 消息字符串；`std::source_location`（用户调用处） |
+| `not_found` | `type_index`（未找到的类型）；可选 key 字符串；可选诊断提示（consumer 信息或 slot_hint） |
 | `cyclic_dependency` | `vector<type_index>`（环路节点序列） |
-| `lifetime_mismatch` | 消费者 `type_index` + lifetime 名；依赖 `type_index` + lifetime 名 |
+| `lifetime_mismatch` | 消费者 `type_index` + lifetime 名 + 可选 impl 类型名；依赖 `type_index` + lifetime 名 |
 | `duplicate_registration` | `type_index`；可选 key 字符串 |
-| `resolution_error` | `type_index`；内层异常的 `what()` |
+| `resolution_error` | `type_index`；内层异常的 `what()`；组件的注册位置（若可用） |
 
 ### 11.3 错误消息可读性要求
 
 - 所有涉及类型的错误消息均应包含 demangled 类型名（`abi::__cxa_demangle`）
 - 所有 `di_error` 子类均应在消息中附加调用处的源码位置（文件名、行号）
 - **`not_found` 槽位提示**：当 `get<T>()` 或 `create<T>()` 因槽位不匹配而抛出 `not_found` 时（例如类型注册为 transient 而通过 `get<T>()` 解析），错误消息应包含诊断提示，指明该类型在哪个槽位存在以及应使用哪个方法（如 "type is registered as transient (use create<T>())"）
+
+### 11.4 `source_location` 准确性要求
+
+所有公共模板方法（`add_singleton`、`add_transient`、`add_collection`、`forward`、`decorate` 等）以及 `build()` 均接受 `std::source_location loc = std::source_location::current()` 作为末尾参数。由于模板在用户编译单元中实例化，`source_location::current()` 的默认值在用户调用处求值，确保异常中携带的位置信息指向用户代码而非库内部。
+
+### 11.5 注册位置追踪
+
+`descriptor` 结构体携带 `std::source_location registration_location` 字段，在 `register_single` 和 `register_collection` 中赋值。后续 `resolution_error` 可在消息中附加 "(registered at file:line)" 以帮助定位出错组件的注册位置。验证阶段（`check_missing_dependencies`）也使用此字段在 `not_found` 的提示中包含注册位置。
+
+### 11.6 非标准异常透传
+
+`resolve_singleton_by_index` 和 `resolve_transient_by_index` 仅捕获 `di_error`（直接重抛）和 `std::exception`（包装为 `resolution_error`）。不派生自 `std::exception` 的异常不做捕获，原样透传给调用方。
+
+### 11.7 编译期诊断消息
+
+所有 `static_assert` 消息均包含触发断言的具体 API 名称，例如：
+- `"add_singleton<I,T>: I must have a virtual destructor when I != T"`
+- `"add_collection<I,T>: I must have a virtual destructor when I != T"`
+- `"forward<From,To>: From must have a virtual destructor"`
+
+以便开发者在编译错误输出中立即识别出错的注册调用。
 
 ---
 

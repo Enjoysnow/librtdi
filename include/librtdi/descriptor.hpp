@@ -6,6 +6,7 @@
 
 #include <functional>
 #include <optional>
+#include <source_location>
 #include <string>
 #include <typeindex>
 #include <vector>
@@ -55,6 +56,9 @@ struct descriptor {
 
     using forward_cast_fn = std::function<void*(void*)>;
     forward_cast_fn forward_cast;
+
+    /// Source location of the user code that registered this descriptor.
+    std::source_location registration_location{};
 };
 
 } // namespace librtdi

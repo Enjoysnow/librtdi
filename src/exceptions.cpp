@@ -1,6 +1,7 @@
 #include "librtdi/exceptions.hpp"
 
 #include <cstdlib>
+#include <optional>
 #include <typeindex>
 #include <string>
 #include <memory>
@@ -13,7 +14,7 @@ namespace librtdi {
 
 namespace internal {
 
-static std::string demangle(std::type_index type) {
+std::string demangle(std::type_index type) {
 #if defined(__GNUC__)
     int status = 0;
     std::unique_ptr<char, decltype(&std::free)> demangled(
@@ -82,19 +83,25 @@ cyclic_dependency::cyclic_dependency(const std::vector<std::type_index>& cycle,
 std::string lifetime_mismatch::build_message(std::type_index consumer,
                                              std::string_view consumer_lt,
                                              std::type_index dependency,
-                                             std::string_view dep_lt) {
-    return "lifetime_kind mismatch: " + internal::demangle(consumer)
-           + " (" + std::string(consumer_lt) + ") depends on "
+                                             std::string_view dep_lt,
+                                             std::optional<std::type_index> consumer_impl) {
+    std::string msg = "lifetime_kind mismatch: " + internal::demangle(consumer);
+    if (consumer_impl.has_value()) {
+        msg += " [impl: " + internal::demangle(consumer_impl.value()) + "]";
+    }
+    msg += " (" + std::string(consumer_lt) + ") depends on "
            + internal::demangle(dependency) + " (" + std::string(dep_lt) + ")";
+    return msg;
 }
 
 lifetime_mismatch::lifetime_mismatch(std::type_index consumer,
                                      std::string_view consumer_lifetime,
                                      std::type_index dependency,
                                      std::string_view dependency_lifetime,
+                                     std::optional<std::type_index> consumer_impl,
                                      std::source_location loc)
     : di_error(build_message(consumer, consumer_lifetime,
-                             dependency, dependency_lifetime), loc)
+                             dependency, dependency_lifetime, consumer_impl), loc)
     , consumer_(consumer)
     , dependency_(dependency)
 {}
@@ -120,5 +127,23 @@ resolution_error::resolution_error(std::type_index type,
                + ": " + inner.what(), loc)
     , component_type_(type)
 {}
+
+resolution_error::resolution_error(std::type_index type,
+                                   const std::exception& inner,
+                                   std::source_location registration_loc,
+                                   std::source_location /*loc*/)
+    : di_error([&]() {
+          std::string msg = "Failed to resolve component " + internal::demangle(type)
+                            + ": " + inner.what();
+          if (registration_loc.file_name()[0]) {
+              msg += " (registered at " + std::string(registration_loc.file_name())
+                     + ":" + std::to_string(registration_loc.line()) + ")";
+          }
+          return msg;
+      }(), registration_loc)
+    , component_type_(type)
+{}
+
+
 
 } // namespace librtdi

@@ -89,7 +89,9 @@ void* resolver::resolve_singleton_by_index(std::size_t idx) {
     } catch (const di_error&) {
         throw;
     } catch (const std::exception& e) {
-        throw resolution_error(desc.component_type, e);
+        throw resolution_error(desc.component_type, e,
+                               desc.registration_location,
+                               std::source_location::current());
     }
 
     void* raw = instance.get();
@@ -108,7 +110,9 @@ erased_ptr resolver::resolve_transient_by_index(std::size_t idx) {
     } catch (const di_error&) {
         throw;
     } catch (const std::exception& e) {
-        throw resolution_error(desc.component_type, e);
+        throw resolution_error(desc.component_type, e,
+                               desc.registration_location,
+                               std::source_location::current());
     }
 }
 

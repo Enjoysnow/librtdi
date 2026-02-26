@@ -265,7 +265,15 @@ std::runtime_error
        +-- resolution_error        <-- wraps factory exceptions
 ```
 
-All exception messages include demangled type names and source location. `not_found` includes diagnostic hints when the type exists in a different slot (e.g., registered as transient but requested via `get<T>()`, suggesting `create<T>()` instead).
+All exception messages include demangled type names and source location (pointing to the user's call site, not library internals). Key diagnostic features:
+
+- **`source_location` accuracy**: All public template methods capture `std::source_location::current()` at the user call site, ensuring exception locations are meaningful
+- **Registration location tracking**: `descriptor` stores where each component was registered; `resolution_error` and `not_found` messages include "(registered at file:line)"
+- **Consumer info in `not_found`**: Validation-phase `not_found` messages include the consumer type, impl type, lifetime, and registration location
+- **Impl info in `lifetime_mismatch`**: Messages optionally include the concrete implementation type name
+- **Non-standard exception pass-through**: Factory exceptions that don't derive from `std::exception` are not caught — they propagate to the caller as-is
+- **Contextual `static_assert`**: Each compile-time assertion names the specific API (e.g., `"add_singleton<I,T>: I must have a virtual destructor when I != T"`)
+- **Slot hints in `not_found`**: When the type exists in a different slot (e.g., registered as transient but requested via `get<T>()`), the message suggests the correct method
 
 ## Thread Safety
 

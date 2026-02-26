@@ -3,6 +3,7 @@
 #include "export.hpp"
 
 #include <stdexcept>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <source_location>
@@ -10,6 +11,11 @@
 #include <vector>
 
 namespace librtdi {
+
+namespace internal {
+/// Demangle a type_index to human-readable name (GCC/Clang ABI-based).
+LIBRTDI_EXPORT std::string demangle(std::type_index type);
+} // namespace internal
 
 class LIBRTDI_EXPORT di_error : public std::runtime_error {
 public:
@@ -60,6 +66,7 @@ class LIBRTDI_EXPORT lifetime_mismatch : public di_error {
 public:
     lifetime_mismatch(std::type_index consumer, std::string_view consumer_lifetime,
                       std::type_index dependency, std::string_view dependency_lifetime,
+                      std::optional<std::type_index> consumer_impl = std::nullopt,
                       std::source_location loc = std::source_location::current());
 
     std::type_index consumer() const noexcept { return consumer_; }
@@ -70,7 +77,8 @@ private:
     std::type_index dependency_;
 
     static std::string build_message(std::type_index consumer, std::string_view consumer_lt,
-                                     std::type_index dependency, std::string_view dep_lt);
+                                     std::type_index dependency, std::string_view dep_lt,
+                                     std::optional<std::type_index> consumer_impl);
 };
 
 class LIBRTDI_EXPORT duplicate_registration : public di_error {
@@ -91,6 +99,11 @@ class LIBRTDI_EXPORT resolution_error : public di_error {
 public:
     resolution_error(std::type_index type, const std::exception& inner,
                      std::source_location loc = std::source_location::current());
+
+    /// Overload that includes the registration location of the failing component.
+    resolution_error(std::type_index type, const std::exception& inner,
+                     std::source_location registration_loc,
+                     std::source_location loc);
 
     std::type_index component_type() const noexcept { return component_type_; }
 

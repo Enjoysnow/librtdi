@@ -5,6 +5,7 @@
 #include <cassert>
 #include <optional>
 #include <set>
+#include <source_location>
 #include <vector>
 #include <typeindex>
 #include <stdexcept>
@@ -12,7 +13,8 @@
 namespace librtdi {
 
 void validate_descriptors(const std::vector<descriptor>& descriptors,
-                          const build_options& options);
+                          const build_options& options,
+                          std::source_location loc);
 
 // ---------------------------------------------------------------
 // Impl
@@ -71,27 +73,28 @@ registry& registry::operator=(registry&&) noexcept = default;
 registry& registry::register_single(
         std::type_index type, lifetime_kind lifetime,
         factory_fn factory, std::vector<dependency_info> deps,
-        std::string key, std::optional<std::type_index> impl_type) {
+        std::string key, std::optional<std::type_index> impl_type,
+        std::source_location loc) {
     if (impl_->built) {
-        throw di_error("Cannot register components after build() has been called");
+        throw di_error("Cannot register components after build() has been called", loc);
     }
     if (!factory) {
-        throw di_error("Component factory cannot be empty");
+        throw di_error("Component factory cannot be empty", loc);
     }
 
     // Check uniqueness for single-instance slots
     if (impl_->has_single(type, key, lifetime)) {
         if (key.empty()) {
-            throw duplicate_registration(type);
+            throw duplicate_registration(type, loc);
         } else {
-            throw duplicate_registration(type, key);
+            throw duplicate_registration(type, key, loc);
         }
     }
 
     impl_->descriptors.push_back(descriptor{
         type, lifetime, std::move(factory), std::move(deps),
         std::move(key), /*is_collection=*/false, std::move(impl_type),
-        std::nullopt, nullptr
+        std::nullopt, nullptr, loc
     });
     return *this;
 }
@@ -103,18 +106,19 @@ registry& registry::register_single(
 registry& registry::register_collection(
         std::type_index type, lifetime_kind lifetime,
         factory_fn factory, std::vector<dependency_info> deps,
-        std::string key, std::optional<std::type_index> impl_type) {
+        std::string key, std::optional<std::type_index> impl_type,
+        std::source_location loc) {
     if (impl_->built) {
-        throw di_error("Cannot register components after build() has been called");
+        throw di_error("Cannot register components after build() has been called", loc);
     }
     if (!factory) {
-        throw di_error("Component factory cannot be empty");
+        throw di_error("Component factory cannot be empty", loc);
     }
 
     impl_->descriptors.push_back(descriptor{
         type, lifetime, std::move(factory), std::move(deps),
         std::move(key), /*is_collection=*/true, std::move(impl_type),
-        std::nullopt, nullptr
+        std::nullopt, nullptr, loc
     });
     return *this;
 }
@@ -127,9 +131,10 @@ registry& registry::register_forward(
         std::type_index interface_type,
         std::type_index target_type,
         descriptor::forward_cast_fn cast,
-        void (*forward_deleter)(void*)) {
+        void (*forward_deleter)(void*),
+        std::source_location loc) {
     if (impl_->built) {
-        throw di_error("Cannot register components after build() has been called");
+        throw di_error("Cannot register components after build() has been called", loc);
     }
     impl_->forwards.push_back({interface_type, target_type, std::move(cast),
                                forward_deleter});
@@ -144,9 +149,10 @@ registry& registry::register_decorator(
         std::type_index interface_type,
         std::optional<std::type_index> target_impl,
         decorator_wrapper wrapper,
-        std::vector<dependency_info> extra_deps) {
+        std::vector<dependency_info> extra_deps,
+        std::source_location loc) {
     if (impl_->built) {
-        throw di_error("Cannot register decorators after build() has been called");
+        throw di_error("Cannot register decorators after build() has been called", loc);
     }
     impl_->decorators.push_back({interface_type, std::move(target_impl),
                                   std::move(wrapper), std::move(extra_deps)});
@@ -161,9 +167,9 @@ const std::vector<descriptor>& registry::descriptors() const {
 // build
 // ---------------------------------------------------------------
 
-std::shared_ptr<resolver> registry::build(build_options options) {
+std::shared_ptr<resolver> registry::build(build_options options, std::source_location loc) {
     if (impl_->built) {
-        throw di_error("build() can only be called once");
+        throw di_error("build() can only be called once", loc);
     }
 
     // ① Forward expansion: for each forward entry, replicate all matching
@@ -271,7 +277,7 @@ std::shared_ptr<resolver> registry::build(build_options options) {
 
     // ③ Validate before building
     if (options.validate_on_build) {
-        validate_descriptors(impl_->descriptors, options);
+        validate_descriptors(impl_->descriptors, options, loc);
     }
 
     // ④ Collect singleton descriptor indices before descriptors are moved.
