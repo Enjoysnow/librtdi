@@ -1,5 +1,6 @@
 #pragma once
 
+#include "export.hpp"
 #include "descriptor.hpp"
 #include "exceptions.hpp"
 
@@ -11,7 +12,7 @@
 
 namespace librtdi {
 
-class resolver {
+class LIBRTDI_EXPORT resolver {
 public:
     ~resolver();
 

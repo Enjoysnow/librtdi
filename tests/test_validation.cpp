@@ -103,7 +103,8 @@ TEST_CASE("validation disabled entirely", "[validation]") {
     librtdi::registry reg;
     // B depends on IA which is not registered
     reg.add_singleton<IB, B>(librtdi::deps<IA>);
-    REQUIRE_NOTHROW(reg.build({.validate_on_build = false}));
+    REQUIRE_NOTHROW(reg.build({.validate_on_build = false,
+                               .eager_singletons = false}));
 }
 
 TEST_CASE("transient depending on singleton is ok", "[validation]") {
@@ -130,7 +131,8 @@ TEST_CASE("detect_cycles disabled passes cyclic deps", "[validation]") {
     reg.add_singleton<IX, X>(librtdi::deps<IY>);
     reg.add_singleton<IY, Y>(librtdi::deps<IX>);
     REQUIRE_NOTHROW(reg.build({.validate_lifetimes = true,
-                                .detect_cycles = false}));
+                                .detect_cycles = false,
+                                .eager_singletons = false}));
 }
 
 // ---------------------------------------------------------------

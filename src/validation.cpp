@@ -1,6 +1,5 @@
 #include "librtdi/descriptor.hpp"
 #include "librtdi/exceptions.hpp"
-#include "librtdi/registry.hpp"
 
 #include <algorithm>
 #include <map>

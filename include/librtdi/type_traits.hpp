@@ -1,5 +1,7 @@
 #pragma once
 
+#include "decorated_ptr.hpp"
+
 #include <memory>
 #include <tuple>
 #include <type_traits>
@@ -112,14 +114,14 @@ concept constructible_from_deps =
 // Decorator concepts
 // ---------------------------------------------------------------
 
-/// TDecorator(std::unique_ptr<TInterface>) constructible.
+/// TDecorator(decorated_ptr<TInterface>) constructible.
 template <typename TDecorator, typename TInterface>
 concept decorator_constructible =
-    std::is_constructible_v<TDecorator, std::unique_ptr<TInterface>>;
+    std::is_constructible_v<TDecorator, decorated_ptr<TInterface>>;
 
-/// TDecorator(std::unique_ptr<TInterface>, inject_type_t<Extra>...) constructible.
+/// TDecorator(decorated_ptr<TInterface>, inject_type_t<Extra>...) constructible.
 template <typename TDecorator, typename TInterface, typename... TExtra>
 concept decorator_constructible_with_deps =
-    std::is_constructible_v<TDecorator, std::unique_ptr<TInterface>, inject_type_t<TExtra>...>;
+    std::is_constructible_v<TDecorator, decorated_ptr<TInterface>, inject_type_t<TExtra>...>;
 
 } // namespace librtdi

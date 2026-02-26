@@ -1,5 +1,7 @@
 #pragma once
 
+#include "export.hpp"
+#include "decorated_ptr.hpp"
 #include "descriptor.hpp"
 #include "resolver.hpp"
 #include "exceptions.hpp"
@@ -27,12 +29,6 @@ struct deps_tag {
 
 template <typename... Deps>
 inline constexpr deps_tag<Deps...> deps{};
-
-struct build_options {
-    bool validate_on_build  = true;
-    bool validate_lifetimes = true;
-    bool detect_cycles      = true;
-};
 
 // ---------------------------------------------------------------
 // Helper: resolve a single dep at factory-call time
@@ -75,7 +71,7 @@ std::vector<dependency_info> make_dep_infos() {
 // registry
 // ---------------------------------------------------------------
 
-class registry {
+class LIBRTDI_EXPORT registry {
 public:
     registry();
     ~registry();
@@ -309,10 +305,10 @@ public:
             typeid(TInterface), std::nullopt,
             [](factory_fn inner) -> factory_fn {
                 return [inner = std::move(inner)](resolver& r) -> erased_ptr {
-                    auto raw = inner(r);
-                    auto inner_ptr = std::unique_ptr<TInterface>(
-                        static_cast<TInterface*>(raw.release()));
-                    return make_erased_as<TInterface, TDecorator>(std::move(inner_ptr));
+                    auto ep = inner(r);
+                    auto* typed = static_cast<TInterface*>(ep.get());
+                    decorated_ptr<TInterface> handle(typed, std::move(ep));
+                    return make_erased_as<TInterface, TDecorator>(std::move(handle));
                 };
             },
             {});
@@ -329,11 +325,11 @@ public:
             typeid(TInterface), std::nullopt,
             [](factory_fn inner) -> factory_fn {
                 return [inner = std::move(inner)](resolver& r) -> erased_ptr {
-                    auto raw = inner(r);
-                    auto inner_ptr = std::unique_ptr<TInterface>(
-                        static_cast<TInterface*>(raw.release()));
+                    auto ep = inner(r);
+                    auto* typed = static_cast<TInterface*>(ep.get());
+                    decorated_ptr<TInterface> handle(typed, std::move(ep));
                     return make_erased_as<TInterface, TDecorator>(
-                        std::move(inner_ptr),
+                        std::move(handle),
                         detail::resolve_dep<Extra>(r)...);
                 };
             },
@@ -351,10 +347,10 @@ public:
             typeid(TInterface), target,
             [](factory_fn inner) -> factory_fn {
                 return [inner = std::move(inner)](resolver& r) -> erased_ptr {
-                    auto raw = inner(r);
-                    auto inner_ptr = std::unique_ptr<TInterface>(
-                        static_cast<TInterface*>(raw.release()));
-                    return make_erased_as<TInterface, TDecorator>(std::move(inner_ptr));
+                    auto ep = inner(r);
+                    auto* typed = static_cast<TInterface*>(ep.get());
+                    decorated_ptr<TInterface> handle(typed, std::move(ep));
+                    return make_erased_as<TInterface, TDecorator>(std::move(handle));
                 };
             },
             {});
@@ -371,11 +367,11 @@ public:
             typeid(TInterface), target,
             [](factory_fn inner) -> factory_fn {
                 return [inner = std::move(inner)](resolver& r) -> erased_ptr {
-                    auto raw = inner(r);
-                    auto inner_ptr = std::unique_ptr<TInterface>(
-                        static_cast<TInterface*>(raw.release()));
+                    auto ep = inner(r);
+                    auto* typed = static_cast<TInterface*>(ep.get());
+                    decorated_ptr<TInterface> handle(typed, std::move(ep));
                     return make_erased_as<TInterface, TDecorator>(
-                        std::move(inner_ptr),
+                        std::move(handle),
                         detail::resolve_dep<Extra>(r)...);
                 };
             },
@@ -395,10 +391,10 @@ public:
             typeid(TInterface), std::type_index(typeid(TTarget)),
             [](factory_fn inner) -> factory_fn {
                 return [inner = std::move(inner)](resolver& r) -> erased_ptr {
-                    auto raw = inner(r);
-                    auto inner_ptr = std::unique_ptr<TInterface>(
-                        static_cast<TInterface*>(raw.release()));
-                    return make_erased_as<TInterface, TDecorator>(std::move(inner_ptr));
+                    auto ep = inner(r);
+                    auto* typed = static_cast<TInterface*>(ep.get());
+                    decorated_ptr<TInterface> handle(typed, std::move(ep));
+                    return make_erased_as<TInterface, TDecorator>(std::move(handle));
                 };
             },
             {});
@@ -417,11 +413,11 @@ public:
             typeid(TInterface), std::type_index(typeid(TTarget)),
             [](factory_fn inner) -> factory_fn {
                 return [inner = std::move(inner)](resolver& r) -> erased_ptr {
-                    auto raw = inner(r);
-                    auto inner_ptr = std::unique_ptr<TInterface>(
-                        static_cast<TInterface*>(raw.release()));
+                    auto ep = inner(r);
+                    auto* typed = static_cast<TInterface*>(ep.get());
+                    decorated_ptr<TInterface> handle(typed, std::move(ep));
                     return make_erased_as<TInterface, TDecorator>(
-                        std::move(inner_ptr),
+                        std::move(handle),
                         detail::resolve_dep<Extra>(r)...);
                 };
             },

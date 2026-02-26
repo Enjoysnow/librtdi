@@ -95,9 +95,9 @@ struct PluginManager {
 // ---------------------------------------------------------------
 
 struct TimingLogger : ILogger {
-    std::unique_ptr<ILogger> inner_;
+    librtdi::decorated_ptr<ILogger> inner_;
 
-    explicit TimingLogger(std::unique_ptr<ILogger> inner)
+    explicit TimingLogger(librtdi::decorated_ptr<ILogger> inner)
         : inner_(std::move(inner)) {}
 
     void log(const std::string& msg) const override {

@@ -139,7 +139,8 @@ TEST_CASE("resolution_error includes type and inner message", "[diagnostics]") {
 
     librtdi::registry reg;
     reg.add_singleton<IFailing, FailingImpl>();
-    auto r = reg.build({.validate_on_build = false});
+    auto r = reg.build({.validate_on_build = false,
+                        .eager_singletons = false});
 
     try {
         r->get<IFailing>();

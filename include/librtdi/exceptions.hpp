@@ -1,5 +1,7 @@
 #pragma once
 
+#include "export.hpp"
+
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -9,7 +11,7 @@
 
 namespace librtdi {
 
-class di_error : public std::runtime_error {
+class LIBRTDI_EXPORT di_error : public std::runtime_error {
 public:
     explicit di_error(const std::string& message,
                       std::source_location loc = std::source_location::current());
@@ -23,7 +25,7 @@ private:
                                       const std::source_location& loc);
 };
 
-class not_found : public di_error {
+class LIBRTDI_EXPORT not_found : public di_error {
 public:
     explicit not_found(std::type_index type,
                        std::source_location loc = std::source_location::current());
@@ -42,7 +44,7 @@ private:
     std::type_index component_type_;
 };
 
-class cyclic_dependency : public di_error {
+class LIBRTDI_EXPORT cyclic_dependency : public di_error {
 public:
     explicit cyclic_dependency(const std::vector<std::type_index>& cycle,
                                std::source_location loc = std::source_location::current());
@@ -54,7 +56,7 @@ private:
     static std::string build_message(const std::vector<std::type_index>& cycle);
 };
 
-class lifetime_mismatch : public di_error {
+class LIBRTDI_EXPORT lifetime_mismatch : public di_error {
 public:
     lifetime_mismatch(std::type_index consumer, std::string_view consumer_lifetime,
                       std::type_index dependency, std::string_view dependency_lifetime,
@@ -71,7 +73,7 @@ private:
                                      std::type_index dependency, std::string_view dep_lt);
 };
 
-class duplicate_registration : public di_error {
+class LIBRTDI_EXPORT duplicate_registration : public di_error {
 public:
     explicit duplicate_registration(std::type_index type,
                                     std::source_location loc = std::source_location::current());
@@ -85,7 +87,7 @@ private:
     std::type_index component_type_;
 };
 
-class resolution_error : public di_error {
+class LIBRTDI_EXPORT resolution_error : public di_error {
 public:
     resolution_error(std::type_index type, const std::exception& inner,
                      std::source_location loc = std::source_location::current());

@@ -245,19 +245,11 @@ std::shared_ptr<resolver> registry::build(build_options options) {
     }
 
     // ② Apply decorators: wrap descriptor factories in registered order.
-    //    Skip forward-expanded singleton descriptors: their factories return
-    //    non-owning erased_ptr (deleter==nullptr), but decorator wrappers
-    //    assume ownership via unique_ptr — applying a decorator would cause
-    //    double-free on resolver destruction.
+    //    decorated_ptr<I> handles both owning (transient) and non-owning
+    //    (forward-singleton) cases, so no descriptors need to be skipped.
     for (auto& dec : impl_->decorators) {
         for (auto& desc : impl_->descriptors) {
             if (desc.component_type != dec.interface_type) continue;
-
-            // Forward-expanded singletons must not be decorated (ownership conflict)
-            if (desc.forward_target.has_value() &&
-                desc.lifetime == lifetime_kind::singleton) {
-                continue;
-            }
 
             // Check if this decorator targets a specific impl
             if (dec.target_impl.has_value()) {
@@ -282,9 +274,30 @@ std::shared_ptr<resolver> registry::build(build_options options) {
         validate_descriptors(impl_->descriptors, options);
     }
 
+    // ④ Collect singleton descriptor indices before descriptors are moved.
+    std::vector<std::size_t> singleton_indices;
+    if (options.eager_singletons) {
+        for (std::size_t i = 0; i < impl_->descriptors.size(); ++i) {
+            if (impl_->descriptors[i].lifetime == lifetime_kind::singleton) {
+                singleton_indices.push_back(i);
+            }
+        }
+    }
+
     impl_->built = true;
 
-    return resolver::create(std::move(impl_->descriptors));
+    auto r = resolver::create(std::move(impl_->descriptors));
+
+    // ⑤ Eager singleton instantiation: resolve all singletons now so that
+    //    factory errors surface at build time and first-request latency is
+    //    eliminated.
+    if (options.eager_singletons) {
+        for (auto idx : singleton_indices) {
+            r->resolve_singleton_by_index(idx);
+        }
+    }
+
+    return r;
 }
 
 } // namespace librtdi

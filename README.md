@@ -83,7 +83,7 @@ int main() {
 
 | Enum | Meaning | Resolution API |
 |------|---------|----------------|
-| `singleton` | Global unique, lazily created on first resolve | `get<T>()` returns `T&` |
+| `singleton` | Global unique, created eagerly during `build()` by default | `get<T>()` returns `T&` |
 | `transient` | New instance on every resolve | `create<T>()` returns `unique_ptr<T>` |
 
 ### Four-Slot Model
@@ -175,8 +175,8 @@ Transparently wrap registered implementations with additional logic:
 
 ```cpp
 struct LoggingFoo : IFoo {
-    std::unique_ptr<IFoo> inner_;
-    explicit LoggingFoo(std::unique_ptr<IFoo> inner)
+    librtdi::decorated_ptr<IFoo> inner_;
+    explicit LoggingFoo(librtdi::decorated_ptr<IFoo> inner)
         : inner_(std::move(inner)) {}
 
     void do_something() override {
@@ -232,10 +232,13 @@ auto r = reg.build({
     .validate_on_build  = true,   // master switch
     .validate_lifetimes = true,   // check captive dependency
     .detect_cycles      = true,   // check circular dependencies
+    .eager_singletons   = true,   // instantiate all singletons during build()
 });
 ```
 
-Validation order: missing dependencies, then lifetime compatibility, then cycle detection.
+When `eager_singletons` is `true` (default), all singleton factories are invoked during `build()`, so factory exceptions surface immediately and first-request latency is eliminated. Set to `false` for lazy initialization.
+
+Validation order: missing dependencies, then lifetime compatibility, then cycle detection, then eager singleton instantiation.
 
 ## Inheritance Model
 
@@ -271,6 +274,8 @@ All exception messages include demangled type names and source location. `not_fo
 
 ## Building
 
+librtdi builds as a **shared library** (`librtdi.so` / `librtdi.dylib` / `rtdi.dll`) by default.
+
 ```bash
 cmake -B build -G Ninja
 cmake --build build
@@ -281,6 +286,16 @@ ctest --test-dir build --output-on-failure
 # Package
 cmake --build build --target package
 ```
+
+### Cross-Platform Notes
+
+| Platform | Library Output | Notes |
+|----------|----------------|-------|
+| Linux | `librtdi.so.0.1.1` (SOVERSION symlinks) | `-fvisibility=hidden`; only `LIBRTDI_EXPORT` symbols exported |
+| macOS | `librtdi.0.1.1.dylib` | `MACOSX_RPATH ON`; `@loader_path` RPATH |
+| Windows | `rtdi.dll` + `rtdi.lib` (import lib) | `__declspec(dllexport/dllimport)` via `LIBRTDI_EXPORT` macro |
+
+To build and link as a **static library**, define `LIBRTDI_STATIC` before including any librtdi header, and change `SHARED` to `STATIC` in `src/CMakeLists.txt`.
 
 ### Downstream Integration
 
@@ -309,6 +324,11 @@ librtdi/
 ├── include/
 │   ├── librtdi.hpp
 │   └── librtdi/
+│       ├── export.hpp
+│       ├── fwd.hpp
+│       ├── lifetime.hpp
+│       ├── erased_ptr.hpp
+│       ├── decorated_ptr.hpp
 │       ├── descriptor.hpp
 │       ├── exceptions.hpp
 │       ├── registry.hpp
@@ -324,6 +344,7 @@ librtdi/
 │   ├── test_concurrency.cpp
 │   ├── test_decorator.cpp
 │   ├── test_diagnostics.cpp
+│   ├── test_eager.cpp
 │   ├── test_edge_cases.cpp
 │   ├── test_forward.cpp
 │   ├── test_inheritance.cpp

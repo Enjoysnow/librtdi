@@ -17,6 +17,7 @@ set(TEST_SOURCES
     test_forward.cpp
     test_decorator.cpp
     test_inheritance.cpp
+    test_eager.cpp
 )
 
 add_executable(librtdi_tests ${TEST_SOURCES})

@@ -137,7 +137,8 @@ TEST_CASE("resolution_error wraps factory exception", "[resolution]") {
 
     librtdi::registry reg;
     reg.add_singleton<IFailing, FailingImpl>();
-    auto r = reg.build({.validate_on_build = false});
+    auto r = reg.build({.validate_on_build = false,
+                        .eager_singletons = false});
 
     try {
         r->get<IFailing>();
@@ -162,7 +163,8 @@ TEST_CASE("resolution_error passes through di_error", "[resolution]") {
     librtdi::registry reg;
     // ISvc depends on IDep which is not registered
     reg.add_singleton<ISvc, Svc>(librtdi::deps<IDep>);
-    auto r = reg.build({.validate_on_build = false});
+    auto r = reg.build({.validate_on_build = false,
+                        .eager_singletons = false});
 
     // When resolving ISvc, resolving IDep will throw not_found;
     // resolver should NOT wrap di_error in resolution_error

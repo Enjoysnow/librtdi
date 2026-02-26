@@ -260,8 +260,8 @@ TEST_CASE("MI: forward between two different interface bases", "[inheritance][mi
 
 TEST_CASE("MI: decorate via non-first base", "[inheritance][mi][decorator]") {
     struct SwimDecorator : ISwimmable {
-        std::unique_ptr<ISwimmable> inner_;
-        explicit SwimDecorator(std::unique_ptr<ISwimmable> inner) : inner_(std::move(inner)) {}
+        librtdi::decorated_ptr<ISwimmable> inner_;
+        explicit SwimDecorator(librtdi::decorated_ptr<ISwimmable> inner) : inner_(std::move(inner)) {}
         int swim_speed() const override { return inner_->swim_speed() * 2; }
     };
 
@@ -272,6 +272,64 @@ TEST_CASE("MI: decorate via non-first base", "[inheritance][mi][decorator]") {
 
     auto& swimmer = r->get<ISwimmable>();
     REQUIRE(swimmer.swim_speed() == 10); // 5 * 2
+}
+
+// ===============================================================
+// MI: Forward + Decorator combined
+// ===============================================================
+
+TEST_CASE("MI: forward + decorator combined", "[inheritance][mi][forward][decorator]") {
+    struct SwimDecorator : ISwimmable {
+        librtdi::decorated_ptr<ISwimmable> inner_;
+        explicit SwimDecorator(librtdi::decorated_ptr<ISwimmable> inner) : inner_(std::move(inner)) {}
+        int swim_speed() const override { return inner_->swim_speed() * 3; }
+    };
+
+    librtdi::registry reg;
+    reg.add_singleton<Duck, Duck>();
+    reg.forward<ISwimmable, Duck>();
+    reg.decorate<ISwimmable, SwimDecorator>();
+    auto r = reg.build({.validate_on_build = false});
+
+    auto& swimmer = r->get<ISwimmable>();
+    REQUIRE(swimmer.swim_speed() == 15); // 5 * 3
+
+    // Original Duck is not decorated via ISwimmable
+    auto& duck = r->get<Duck>();
+    REQUIRE(duck.swim_speed() == 5);
+}
+
+TEST_CASE("MI: forward to two bases + decorate each independently", "[inheritance][mi][forward][decorator]") {
+    struct AnimalDecorator : IAnimal {
+        librtdi::decorated_ptr<IAnimal> inner_;
+        explicit AnimalDecorator(librtdi::decorated_ptr<IAnimal> inner) : inner_(std::move(inner)) {}
+        std::string species() const override { return "fancy_" + inner_->species(); }
+    };
+
+    struct SwimDecorator : ISwimmable {
+        librtdi::decorated_ptr<ISwimmable> inner_;
+        explicit SwimDecorator(librtdi::decorated_ptr<ISwimmable> inner) : inner_(std::move(inner)) {}
+        int swim_speed() const override { return inner_->swim_speed() * 2; }
+    };
+
+    librtdi::registry reg;
+    reg.add_singleton<Duck, Duck>();
+    reg.forward<IAnimal, Duck>();
+    reg.forward<ISwimmable, Duck>();
+    reg.decorate<IAnimal, AnimalDecorator>();
+    reg.decorate<ISwimmable, SwimDecorator>();
+    auto r = reg.build({.validate_on_build = false});
+
+    auto& animal = r->get<IAnimal>();
+    REQUIRE(animal.species() == "fancy_duck");
+
+    auto& swimmer = r->get<ISwimmable>();
+    REQUIRE(swimmer.swim_speed() == 10); // 5 * 2
+
+    // Original Duck unchanged
+    auto& duck = r->get<Duck>();
+    REQUIRE(duck.species() == "duck");
+    REQUIRE(duck.swim_speed() == 5);
 }
 
 // ===============================================================
