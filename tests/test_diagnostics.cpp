@@ -520,3 +520,130 @@ TEST_CASE("forward target not registered triggers not_found", "[diagnostics]") {
 
     REQUIRE_THROWS_AS(reg.build(), librtdi::not_found);
 }
+
+// ---------------------------------------------------------------
+// §11.8 Registration stacktrace tests
+// ---------------------------------------------------------------
+
+TEST_CASE("full_diagnostic returns what() when no detail set", "[diagnostics][stacktrace]") {
+    librtdi::di_error err("simple error");
+    REQUIRE(err.full_diagnostic() == std::string(err.what()));
+}
+
+TEST_CASE("full_diagnostic returns what + detail when set", "[diagnostics][stacktrace]") {
+    librtdi::di_error err("some error");
+    err.set_diagnostic_detail("extra info");
+    std::string diag = err.full_diagnostic();
+    REQUIRE_THAT(diag, Catch::Matchers::ContainsSubstring("some error"));
+    REQUIRE_THAT(diag, Catch::Matchers::ContainsSubstring("extra info"));
+}
+
+#ifdef LIBRTDI_STACKTRACE_AVAILABLE
+
+TEST_CASE("not_found includes registration stacktrace in full_diagnostic", "[diagnostics][stacktrace]") {
+    struct IDep { virtual ~IDep() = default; };
+    struct IConsumer { virtual ~IConsumer() = default; };
+    struct ConsumerImpl : IConsumer { explicit ConsumerImpl(IDep&) {} };
+
+    librtdi::registry reg;
+    reg.add_singleton<IConsumer, ConsumerImpl>(librtdi::deps<IDep>);
+
+    try {
+        reg.build();
+        FAIL("Expected not_found exception");
+    } catch (const librtdi::not_found& e) {
+        std::string diag = e.full_diagnostic();
+        // full_diagnostic should contain what() message
+        REQUIRE_THAT(diag, Catch::Matchers::ContainsSubstring("IDep"));
+        // Should also contain a stacktrace with frame info
+        REQUIRE_THAT(diag, Catch::Matchers::ContainsSubstring("Registration stacktrace"));
+    }
+}
+
+TEST_CASE("lifetime_mismatch includes registration stacktrace in full_diagnostic", "[diagnostics][stacktrace]") {
+    struct ISingleton { virtual ~ISingleton() = default; };
+    struct ITransientDep { virtual ~ITransientDep() = default; };
+    struct TransientDepImpl : ITransientDep {};
+    struct SingletonImpl : ISingleton {
+        explicit SingletonImpl(std::unique_ptr<ITransientDep>) {}
+    };
+
+    librtdi::registry reg;
+    reg.add_transient<ITransientDep, TransientDepImpl>();
+    reg.add_singleton<ISingleton, SingletonImpl>(
+        librtdi::deps<librtdi::transient<ITransientDep>>);
+
+    try {
+        reg.build({.validate_lifetimes = true});
+        FAIL("Expected lifetime_mismatch exception");
+    } catch (const librtdi::lifetime_mismatch& e) {
+        std::string diag = e.full_diagnostic();
+        REQUIRE_THAT(diag, Catch::Matchers::ContainsSubstring("singleton"));
+        REQUIRE_THAT(diag, Catch::Matchers::ContainsSubstring("Registration stacktrace"));
+    }
+}
+
+TEST_CASE("cyclic_dependency includes registration stacktrace in full_diagnostic", "[diagnostics][stacktrace]") {
+    struct ICycA { virtual ~ICycA() = default; };
+    struct ICycB { virtual ~ICycB() = default; };
+    struct CycAImpl : ICycA { explicit CycAImpl(ICycB&) {} };
+    struct CycBImpl : ICycB { explicit CycBImpl(ICycA&) {} };
+
+    librtdi::registry reg;
+    reg.add_singleton<ICycA, CycAImpl>(librtdi::deps<ICycB>);
+    reg.add_singleton<ICycB, CycBImpl>(librtdi::deps<ICycA>);
+
+    try {
+        reg.build();
+        FAIL("Expected cyclic_dependency exception");
+    } catch (const librtdi::cyclic_dependency& e) {
+        std::string diag = e.full_diagnostic();
+        REQUIRE_THAT(diag, Catch::Matchers::ContainsSubstring("Cyclic"));
+        REQUIRE_THAT(diag, Catch::Matchers::ContainsSubstring("Registration stacktrace"));
+    }
+}
+
+TEST_CASE("resolution_error includes registration stacktrace in full_diagnostic", "[diagnostics][stacktrace]") {
+    struct IFailing { virtual ~IFailing() = default; };
+    struct FailingImpl : IFailing {
+        FailingImpl() { throw std::runtime_error("factory boom"); }
+    };
+
+    librtdi::registry reg;
+    reg.add_transient<IFailing, FailingImpl>();
+    auto r = reg.build({.validate_on_build = false, .eager_singletons = false});
+
+    try {
+        r->create<IFailing>();
+        FAIL("Expected resolution_error");
+    } catch (const librtdi::resolution_error& e) {
+        std::string diag = e.full_diagnostic();
+        REQUIRE_THAT(diag, Catch::Matchers::ContainsSubstring("factory boom"));
+        REQUIRE_THAT(diag, Catch::Matchers::ContainsSubstring("Registration stacktrace"));
+    }
+}
+
+TEST_CASE("full_diagnostic stacktrace contains function-like frame info", "[diagnostics][stacktrace]") {
+    // Register from a known function to verify stack frames capture real function info
+    struct IStackCheck { virtual ~IStackCheck() = default; };
+    struct IUnresolvable { virtual ~IUnresolvable() = default; };
+    struct StackCheckImpl : IStackCheck {
+        explicit StackCheckImpl(IUnresolvable&) {}
+    };
+
+    librtdi::registry reg;
+    reg.add_singleton<IStackCheck, StackCheckImpl>(librtdi::deps<IUnresolvable>);
+
+    try {
+        reg.build();
+        FAIL("Expected not_found");
+    } catch (const librtdi::not_found& e) {
+        std::string diag = e.full_diagnostic();
+        // Stacktrace should contain at least one numbered frame (e.g. "0#" or "0x")
+        bool has_frame = (diag.find('#') != std::string::npos) ||
+                         (diag.find("0x") != std::string::npos);
+        REQUIRE(has_frame);
+    }
+}
+
+#endif // LIBRTDI_STACKTRACE_AVAILABLE

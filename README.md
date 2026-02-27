@@ -274,6 +274,7 @@ All exception messages include demangled type names and source location (pointin
 - **Non-standard exception pass-through**: Factory exceptions that don't derive from `std::exception` are not caught — they propagate to the caller as-is
 - **Contextual `static_assert`**: Each compile-time assertion names the specific API (e.g., `"add_singleton<I,T>: I must have a virtual destructor when I != T"`)
 - **Slot hints in `not_found`**: When the type exists in a different slot (e.g., registered as transient but requested via `get<T>()`), the message suggests the correct method
+- **Registration stacktrace** (Boost.Stacktrace): When enabled (default ON, `cmake -DLIBRTDI_ENABLE_STACKTRACE=OFF` to disable), every registration captures a full call stack. On build-time validation or resolution errors, call `e.full_diagnostic()` to get `what()` plus the complete registration-time stacktrace — invaluable for tracing back through layers of user code that led to a misconfiguration
 
 ## Thread Safety
 

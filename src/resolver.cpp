@@ -1,5 +1,6 @@
 #include "librtdi/resolver.hpp"
 #include "librtdi/exceptions.hpp"
+#include "stacktrace_utils.hpp"
 
 #include <map>
 #include <mutex>
@@ -89,9 +90,12 @@ void* resolver::resolve_singleton_by_index(std::size_t idx) {
     } catch (const di_error&) {
         throw;
     } catch (const std::exception& e) {
-        throw resolution_error(desc.component_type, e,
+        auto ex = resolution_error(desc.component_type, e,
                                desc.registration_location,
                                std::source_location::current());
+        ex.set_diagnostic_detail(
+            internal::format_registration_trace(desc));
+        throw ex;
     }
 
     void* raw = instance.get();
@@ -110,9 +114,12 @@ erased_ptr resolver::resolve_transient_by_index(std::size_t idx) {
     } catch (const di_error&) {
         throw;
     } catch (const std::exception& e) {
-        throw resolution_error(desc.component_type, e,
+        auto ex = resolution_error(desc.component_type, e,
                                desc.registration_location,
                                std::source_location::current());
+        ex.set_diagnostic_detail(
+            internal::format_registration_trace(desc));
+        throw ex;
     }
 }
 

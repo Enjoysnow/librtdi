@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 project(librtdi
-    VERSION 0.2.1
+    VERSION 0.3.0
     DESCRIPTION "C++20 Runtime Dependency Injection Framework"
     LANGUAGES CXX
 )
@@ -17,6 +17,7 @@ option(BUILD_TESTS              "Build unit tests"                              
 option(LIBRTDI_BUILD_EXAMPLES   "Build example programs"                                   OFF)
 option(LIBRTDI_ENABLE_WARNINGS  "Enable strict compiler warnings"                          ON)
 option(LIBRTDI_ENABLE_SANITIZERS "Enable ASan + UBSan (GCC/Clang) / ASan (MSVC)"           OFF)
+option(LIBRTDI_ENABLE_STACKTRACE "Capture registration call stacks via Boost.Stacktrace"    ON)
 option(LIBRTDI_ENABLE_INSTALL   "Enable installation rules"                                ON)
 option(LIBRTDI_ENABLE_PACKAGE   "Enable CPack packaging"                                   ON)
 

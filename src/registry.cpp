@@ -1,5 +1,6 @@
 #include "librtdi/registry.hpp"
 #include "librtdi/resolver.hpp"
+#include "stacktrace_utils.hpp"
 
 #include <algorithm>
 #include <cassert>
@@ -94,7 +95,7 @@ registry& registry::register_single(
     impl_->descriptors.push_back(descriptor{
         type, lifetime, std::move(factory), std::move(deps),
         std::move(key), /*is_collection=*/false, std::move(impl_type),
-        std::nullopt, nullptr, loc
+        std::nullopt, nullptr, loc, internal::capture_stacktrace()
     });
     return *this;
 }
@@ -118,7 +119,7 @@ registry& registry::register_collection(
     impl_->descriptors.push_back(descriptor{
         type, lifetime, std::move(factory), std::move(deps),
         std::move(key), /*is_collection=*/true, std::move(impl_type),
-        std::nullopt, nullptr, loc
+        std::nullopt, nullptr, loc, internal::capture_stacktrace()
     });
     return *this;
 }

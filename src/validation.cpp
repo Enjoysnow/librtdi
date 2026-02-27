@@ -1,5 +1,6 @@
 #include "librtdi/descriptor.hpp"
 #include "librtdi/exceptions.hpp"
+#include "stacktrace_utils.hpp"
 
 #include <algorithm>
 #include <map>
@@ -62,7 +63,10 @@ void check_missing_dependencies(
                         + std::string(desc.registration_location.file_name())
                         + ":" + std::to_string(desc.registration_location.line());
                 }
-                throw not_found(dep.type, std::string_view{}, hint, loc);
+                auto ex = not_found(dep.type, std::string_view{}, hint, loc);
+                ex.set_diagnostic_detail(
+                    internal::format_registration_trace(desc));
+                throw ex;
             }
         }
     }
@@ -81,9 +85,12 @@ void check_lifetime_rules(const std::vector<descriptor>& descriptors,
                 // Singleton depending on a transient single instance
                 // is a captive dependency — the singleton captures a fresh
                 // instance once and never gets a new one.
-                throw lifetime_mismatch(desc.component_type, "singleton",
+                auto ex = lifetime_mismatch(desc.component_type, "singleton",
                                         dep.type, "transient",
                                         desc.impl_type, loc);
+                ex.set_diagnostic_detail(
+                    internal::format_registration_trace(desc));
+                throw ex;
             }
         }
     }
@@ -109,7 +116,24 @@ void dfs(std::type_index node, bool is_collection, bool is_transient,
         auto it = std::find(path.begin(), path.end(), node);
         std::vector<std::type_index> cycle(it, path.end());
         cycle.push_back(node);
-        throw cyclic_dependency(cycle, loc);
+        auto ex = cyclic_dependency(cycle, loc);
+        // Attach registration stacktraces for all types in the cycle
+        std::string detail;
+        for (auto& ti : cycle) {
+            // Find a descriptor for this type to get its stacktrace
+            for (auto& d : descriptors) {
+                if (d.component_type == ti) {
+                    std::string trace = internal::format_registration_trace(d);
+                    if (!trace.empty()) {
+                        if (!detail.empty()) detail += "\n";
+                        detail += trace;
+                    }
+                    break;
+                }
+            }
+        }
+        if (!detail.empty()) ex.set_diagnostic_detail(detail);
+        throw ex;
     }
 
     state = visit_state::in_progress;

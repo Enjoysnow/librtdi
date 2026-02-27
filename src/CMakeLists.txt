@@ -19,6 +19,35 @@ target_compile_features(librtdi PUBLIC cxx_std_20)
 # export.hpp resolves LIBRTDI_EXPORT to dllexport / visibility("default").
 target_compile_definitions(librtdi PRIVATE LIBRTDI_BUILDING)
 
+# -----------------------------------------------------------------------
+# Optional: Boost.Stacktrace for registration call-stack capture
+# -----------------------------------------------------------------------
+if(LIBRTDI_ENABLE_STACKTRACE)
+    cmake_policy(SET CMP0167 OLD)
+    find_package(Boost 1.65 QUIET COMPONENTS stacktrace_backtrace)
+    if(Boost_stacktrace_backtrace_FOUND)
+        target_link_libraries(librtdi PRIVATE Boost::stacktrace_backtrace)
+        target_compile_definitions(librtdi
+            PRIVATE  LIBRTDI_HAS_STACKTRACE
+            PUBLIC   LIBRTDI_STACKTRACE_AVAILABLE
+        )
+        message(STATUS "librtdi: Boost.Stacktrace enabled (backtrace backend)")
+    else()
+        # Fall back to basic backend
+        find_package(Boost 1.65 QUIET COMPONENTS stacktrace_basic)
+        if(Boost_stacktrace_basic_FOUND)
+            target_link_libraries(librtdi PRIVATE Boost::stacktrace_basic)
+            target_compile_definitions(librtdi
+                PRIVATE  LIBRTDI_HAS_STACKTRACE
+                PUBLIC   LIBRTDI_STACKTRACE_AVAILABLE
+            )
+            message(STATUS "librtdi: Boost.Stacktrace enabled (basic backend)")
+        else()
+            message(WARNING "librtdi: Boost.Stacktrace not found — stacktrace capture disabled")
+        endif()
+    endif()
+endif()
+
 set_target_properties(librtdi PROPERTIES
     VERSION   ${PROJECT_VERSION}
     SOVERSION ${PROJECT_VERSION_MAJOR}

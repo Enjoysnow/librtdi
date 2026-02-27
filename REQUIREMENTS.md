@@ -575,6 +575,28 @@ std::runtime_error
 
 以便开发者在编译错误输出中立即识别出错的注册调用。
 
+### 11.8 注册调用栈追踪（Boost.Stacktrace）
+
+当 CMake 选项 `LIBRTDI_ENABLE_STACKTRACE`（默认 `ON`）启用且系统可找到 Boost.Stacktrace 时，每次 `register_single()` / `register_collection()` 都会通过 `boost::stacktrace::stacktrace()` 捕获完整调用栈，将其以 `std::any` 形式存入 `descriptor::registration_stacktrace` 字段。
+
+#### 公有 API
+
+| 方法 | 说明 |
+|------|------|
+| `di_error::set_diagnostic_detail(std::string)` | 设置扩展诊断信息（如注册调用栈文本），由库内部在抛出异常前调用 |
+| `di_error::diagnostic_detail() const` | 获取扩展诊断信息（空字符串表示无） |
+| `di_error::full_diagnostic() const` | 返回 `what()` + 换行 + `diagnostic_detail()`（若有），用于日志或终端输出 |
+
+#### 行为规则
+
+1. **捕获时机**：调用栈在 `register_single()` / `register_collection()` 内部捕获，保留了从用户代码到注册点的完整帧链。
+2. **附着时机**：当 `build()` 验证阶段或 `resolve_*_by_index` 运行时抛出异常时，库自动从相关 `descriptor` 中提取调用栈并通过 `set_diagnostic_detail()` 附着到异常上。
+3. **涉及的异常类型**：`not_found`、`lifetime_mismatch`、`cyclic_dependency`、`resolution_error`。
+4. **ABI 隔离**：`descriptor::registration_stacktrace` 类型为 `std::any`，Boost 头文件仅在 `src/` 内部包含（`stacktrace_utils.hpp`），不泄漏到公有头文件中。
+5. **编译定义**：`LIBRTDI_HAS_STACKTRACE`（PRIVATE，编译库时使用）、`LIBRTDI_STACKTRACE_AVAILABLE`（PUBLIC，下游代码可用于条件编译）。
+6. **后端选择**：优先使用 `stacktrace_backtrace`（符号解析更完整），退而使用 `stacktrace_basic`。
+7. **关闭方式**：`cmake -DLIBRTDI_ENABLE_STACKTRACE=OFF ..` 将跳过 Boost 查找，所有捕获函数返回空 `std::any`，`full_diagnostic()` 退化为 `what()`。
+
 ---
 
 ## 12. 线程安全

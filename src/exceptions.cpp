@@ -40,6 +40,17 @@ di_error::di_error(const std::string& message, std::source_location loc)
     , location_(loc)
 {}
 
+void di_error::set_diagnostic_detail(std::string detail) {
+    diagnostic_detail_ = std::move(detail);
+}
+
+std::string di_error::full_diagnostic() const {
+    if (diagnostic_detail_.empty()) {
+        return what();
+    }
+    return std::string(what()) + "\n" + diagnostic_detail_;
+}
+
 not_found::not_found(std::type_index type, std::source_location loc)
     : di_error("Component not found: " + internal::demangle(type), loc)
     , component_type_(type)

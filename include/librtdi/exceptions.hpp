@@ -24,8 +24,18 @@ public:
 
     const std::source_location& location() const noexcept { return location_; }
 
+    /// Set extended diagnostic detail (e.g. registration stacktrace).
+    void set_diagnostic_detail(std::string detail);
+
+    /// Get extended diagnostic detail (empty if none).
+    const std::string& diagnostic_detail() const noexcept { return diagnostic_detail_; }
+
+    /// Return what() plus diagnostic detail (if present), separated by newline.
+    LIBRTDI_EXPORT std::string full_diagnostic() const;
+
 private:
     std::source_location location_;
+    std::string diagnostic_detail_;
 
     static std::string format_message(const std::string& msg,
                                       const std::source_location& loc);

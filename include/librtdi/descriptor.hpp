@@ -4,6 +4,7 @@
 #include "lifetime.hpp"
 #include "erased_ptr.hpp"
 
+#include <any>
 #include <functional>
 #include <optional>
 #include <source_location>
@@ -59,6 +60,11 @@ struct descriptor {
 
     /// Source location of the user code that registered this descriptor.
     std::source_location registration_location{};
+
+    /// Full call stack captured when the descriptor was registered.
+    /// Contains boost::stacktrace::stacktrace when LIBRTDI_HAS_STACKTRACE is
+    /// defined; empty std::any otherwise. Accessed via internal helpers only.
+    std::any registration_stacktrace;
 };
 
 } // namespace librtdi
