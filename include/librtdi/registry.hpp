@@ -455,7 +455,7 @@ private:
     // Forward registration
     registry& register_forward(std::type_index interface_type,
                                std::type_index target_type,
-                               descriptor::forward_cast_fn cast,
+                               forward_cast_fn cast,
                                void (*forward_deleter)(void*),
                                std::source_location loc);
 

@@ -38,7 +38,7 @@ struct registry::Impl {
     struct ForwardEntry {
         std::type_index interface_type;
         std::type_index target_type;
-        descriptor::forward_cast_fn cast;
+        forward_cast_fn cast;
         void (*forward_deleter)(void*) = nullptr;
     };
     std::vector<ForwardEntry> forwards;
@@ -131,7 +131,7 @@ registry& registry::register_collection(
 registry& registry::register_forward(
         std::type_index interface_type,
         std::type_index target_type,
-        descriptor::forward_cast_fn cast,
+        forward_cast_fn cast,
         void (*forward_deleter)(void*),
         std::source_location loc) {
     if (impl_->built) {
@@ -190,7 +190,7 @@ std::shared_ptr<resolver> registry::build(build_options options, std::source_loc
 
                 if (target.lifetime == lifetime_kind::singleton) {
                     // Singleton: delegate to the same cached instance
-                    expanded.push_back(descriptor{
+                    expanded.emplace_back(
                         fwd.interface_type,
                         lifetime_kind::singleton,
                         [target_idx, cast](resolver& r) -> erased_ptr {
@@ -201,20 +201,20 @@ std::shared_ptr<resolver> registry::build(build_options options, std::source_loc
                             // because the target owns the instance
                             return erased_ptr(casted, nullptr);
                         },
-                        { dependency_info{fwd.target_type, target.is_collection, false} },
+                        std::vector<dependency_info>{ dependency_info{fwd.target_type, target.is_collection, false} },
                         std::string{},
                         target.is_collection,
                         target.impl_type,
                         fwd.target_type,
                         cast
-                    });
+                    );
                 } else {
                     // Transient: create fresh via target, then cast.
                     // The forward_deleter performs `delete static_cast<TInterface*>(p)`
                     // which works correctly under all inheritance models (single, MI,
                     // virtual) because TInterface has a virtual destructor.
                     auto fwd_deleter = fwd.forward_deleter;
-                    expanded.push_back(descriptor{
+                    expanded.emplace_back(
                         fwd.interface_type,
                         lifetime_kind::transient,
                         [target_idx, cast, fwd_deleter](resolver& r) -> erased_ptr {
@@ -223,26 +223,26 @@ std::shared_ptr<resolver> registry::build(build_options options, std::source_loc
                             void* casted = cast(original);
                             return erased_ptr(casted, fwd_deleter);
                         },
-                        { dependency_info{fwd.target_type, target.is_collection,
+                        std::vector<dependency_info>{ dependency_info{fwd.target_type, target.is_collection,
                                           target.lifetime == lifetime_kind::transient} },
                         std::string{},
                         target.is_collection,
                         target.impl_type,
                         fwd.target_type,
                         cast
-                    });
+                    );
                 }
             }
             if (!found_any) {
                 // Add placeholder so validation detects missing dependency
-                expanded.push_back(descriptor{
+                expanded.emplace_back(
                     fwd.interface_type, lifetime_kind::transient,
                     [](resolver&) -> erased_ptr { return {}; },
-                    { dependency_info{fwd.target_type, false, false} },
+                    std::vector<dependency_info>{dependency_info{fwd.target_type, false, false} },
                     std::string{},
                     false, std::nullopt,
-                    fwd.target_type, nullptr
-                });
+                    fwd.target_type, forward_cast_fn{}
+                );
             }
         }
 

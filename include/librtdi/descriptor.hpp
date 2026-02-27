@@ -16,6 +16,8 @@ namespace librtdi {
 
 using factory_fn = std::function<erased_ptr(resolver&)>;
 
+using forward_cast_fn = std::function<void*(void*)>;
+
 // ---------------------------------------------------------------
 // build_options — controls build-time behaviour
 // ---------------------------------------------------------------
@@ -55,7 +57,6 @@ struct descriptor {
     // Forward registration support
     std::optional<std::type_index> forward_target;
 
-    using forward_cast_fn = std::function<void*(void*)>;
     forward_cast_fn forward_cast;
 
     /// Source location of the user code that registered this descriptor.

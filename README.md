@@ -325,11 +325,12 @@ See [examples/basic_usage.cpp](examples/basic_usage.cpp) for a complete demo of 
 librtdi/
 ├── CMakeLists.txt
 ├── README.md
-├── REQUIREMENTS.md
 ├── cmake/
 │   ├── CompilerWarnings.cmake
 │   ├── Dependencies.cmake
 │   └── librtdiConfig.cmake.in
+├── docs/
+│   └── REQUIREMENTS.md
 ├── include/
 │   ├── librtdi.hpp
 │   └── librtdi/
