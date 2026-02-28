@@ -23,10 +23,11 @@ using forward_cast_fn = std::function<void*(void*)>;
 // ---------------------------------------------------------------
 
 struct build_options {
-    bool validate_on_build  = true;
-    bool validate_lifetimes = true;
-    bool detect_cycles      = true;
-    bool eager_singletons   = true;
+    bool validate_on_build        = true;
+    bool validate_lifetimes       = true;
+    bool detect_cycles            = true;
+    bool eager_singletons         = true;
+    bool allow_empty_collections  = true;
 };
 
 // ---------------------------------------------------------------

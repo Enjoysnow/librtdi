@@ -470,6 +470,7 @@ descriptor 的 `impl_type` 不会因装饰而改变（精确匹配仍基于原�
 | `validate_lifetimes` | `true` | 控制是否执行生命周期兼容性检查 |
 | `detect_cycles` | `true` | 控制是否执行循环依赖检测 |
 | `eager_singletons` | `true` | `true` 时 `build()` 返回前实例化所有 singleton |
+| `allow_empty_collections` | `true` | `true` 时集合依赖的零注册不视为缺失（详见 §10.4） |
 
 ### 10.2 Eager Singleton 实例化
 
@@ -497,7 +498,9 @@ forward singleton），调用其工厂函数完成实例化。
 
 对所有 descriptor 的 `dependencies` 中的每条 `dependency_info`：
 
-- 根据 `(dep.type, dep.is_transient ? transient : singleton, dep.is_collection)` 确定所需槽位
+- 当 `dep.is_collection == true` 且 `allow_empty_collections == true`（默认）时，**跳过此依赖的缺失检查**。集合依赖语义为"零到多"，零注册是合法状态，与 `get_all<T>()` / `create_all<T>()` 返回空容器的运行时行为一致。此行为与 .NET DI、Autofac、Google Fruit、Spring 等主流框架保持对齐（详见附录 A.9）
+- 当 `allow_empty_collections == false` 时，集合依赖与单实例依赖执行相同的存在性检查
+- 对于非集合依赖，根据 `(dep.type, dep.is_transient ? transient : singleton, dep.is_collection)` 确定所需槽位
 - 检查该槽位是否存在至少一条注册
 - 若不存在，抛 `not_found(dep.type)`，**消息中包含要求此依赖的消费者类型名**（`required by ConsumerType`）、消费者的 impl 类型名（若存在）、消费者的生命周期以及注册位置
 
@@ -716,6 +719,31 @@ Singleton 缓存整体使用一把 `recursive_mutex` 保护，允许工厂闭包
 - `owns()` 方法允许装饰器在需要时区分生命周期语义
 
 工厂 wrapper 不再调用 `release()`，改为 `ep.get()` 获取指针 + `move(ep)` 转移 `erased_ptr` 进 `decorated_ptr`，所有权链完整且无歧义。
+
+### A.9 集合依赖默认可选（`allow_empty_collections`）
+
+旧设计中 `check_missing_dependencies` 对集合依赖（`dep.is_collection == true`）和单实例依赖执行完全相同的"必须存在至少一条注册"检查。然而 `resolver::get_all<T>()` 和 `create_all<T>()` 在零注册时返回空容器而非抛出异常，导致构建期校验与运行时行为存在语义断裂。
+
+**行业调研**
+
+所有主流 DI 框架均将集合依赖视为**隐式可选**，零注册时返回空集合而非报错：
+
+- **.NET Microsoft.Extensions.DependencyInjection**：`IEnumerable<T>` 在零注册时返回空序列，从不抛异常
+- **Autofac**：隐式关系类型 `IEnumerable<T>` 始终可解析，零注册时为空集合
+- **Google Fruit**：`getMultibindings<T>()` 零 provider 时返回空 vector
+- **Spring Framework**：`@Autowired List<T>` 对集合类型绕过 required 检查，注入空集合
+- **Dagger 2**：`@Multibinds` 声明后允许空 `Set<T>`
+- **Ninject / Castle Windsor**：集合解析零注册时返回空集合
+
+设计哲学一致：集合表达"零到多"语义（plugin/handler/middleware 贡献模式），零个贡献者是完全合法的应用状态。
+
+**设计决策**
+
+引入 `build_options::allow_empty_collections`（默认 `true`），在 `check_missing_dependencies` 中当 `dep.is_collection && allow_empty_collections` 时跳过该依赖的缺失检查。选择 `build_options` 开关而非新增 `optional_collection<T>` 标签类型，原因是：
+
+1. 避免 `deps<>` API 膨胀（已有 `T`、`singleton<T>`、`transient<T>`、`collection<T>`、`collection<singleton<T>>`、`collection<transient<T>>` 六种形式）
+2. "所有集合都可选"或"所有集合都 required"在同一项目中通常是一致的策略选择，全局粒度够用
+3. 若未来出现按类型细分的需求，可追加 `required_collection<T>` 标签作为 opt-in 强制语义，无需改动现有 API
 
 ---
 

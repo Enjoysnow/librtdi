@@ -164,7 +164,7 @@ TEST_CASE("singleton with transient collection dep is allowed", "[validation]") 
 // Missing collection dependency detected
 // ---------------------------------------------------------------
 
-TEST_CASE("missing collection dependency detected", "[validation]") {
+TEST_CASE("missing collection dependency detected (strict mode)", "[validation]") {
     struct IPlugin {
         virtual ~IPlugin() = default;
     };
@@ -179,7 +179,101 @@ TEST_CASE("missing collection dependency detected", "[validation]") {
     // IPlugin collection is NOT registered
     reg.add_singleton<IHost, Host>(
         librtdi::deps<librtdi::collection<IPlugin>>);
-    REQUIRE_THROWS_AS(reg.build(), librtdi::not_found);
+    // Strict mode: empty collections are forbidden
+    REQUIRE_THROWS_AS(
+        reg.build({.allow_empty_collections = false}),
+        librtdi::not_found);
+}
+
+TEST_CASE("empty collection dep allowed by default", "[validation]") {
+    struct IPlugin {
+        virtual ~IPlugin() = default;
+    };
+    struct IHost {
+        virtual ~IHost() = default;
+    };
+    struct Host : IHost {
+        explicit Host(std::vector<IPlugin*> ps) : plugins_(std::move(ps)) {}
+        std::vector<IPlugin*> plugins_;
+    };
+
+    librtdi::registry reg;
+    // IPlugin collection is NOT registered — default options allow this
+    reg.add_singleton<IHost, Host>(
+        librtdi::deps<librtdi::collection<IPlugin>>);
+    auto r = reg.build(); // default: allow_empty_collections = true
+    REQUIRE_NOTHROW(r->get<IHost>());
+    // The host should have received an empty collection
+    auto& host = r->get<IHost>();
+    auto* h = dynamic_cast<Host*>(&host);
+    REQUIRE(h != nullptr);
+    REQUIRE(h->plugins_.empty());
+}
+
+TEST_CASE("collection dep with registrations works regardless of flag", "[validation]") {
+    struct IPlugin {
+        virtual ~IPlugin() = default;
+    };
+    struct PluginA : IPlugin {};
+    struct IHost {
+        virtual ~IHost() = default;
+    };
+    struct Host : IHost {
+        explicit Host(std::vector<IPlugin*> ps) : count_(ps.size()) {}
+        std::size_t count_;
+    };
+
+    librtdi::registry reg;
+    reg.add_collection<IPlugin, PluginA>(librtdi::lifetime_kind::singleton);
+    reg.add_singleton<IHost, Host>(
+        librtdi::deps<librtdi::collection<IPlugin>>);
+    // Even with strict mode, registered collection passes
+    auto r = reg.build({.allow_empty_collections = false});
+    auto* h = dynamic_cast<Host*>(&r->get<IHost>());
+    REQUIRE(h != nullptr);
+    REQUIRE(h->count_ == 1);
+}
+
+TEST_CASE("empty transient collection dep allowed by default", "[validation]") {
+    struct IPlugin {
+        virtual ~IPlugin() = default;
+    };
+    struct IHost {
+        virtual ~IHost() = default;
+    };
+    struct Host : IHost {
+        explicit Host(std::vector<std::unique_ptr<IPlugin>> ps)
+            : count_(ps.size()) {}
+        std::size_t count_;
+    };
+
+    librtdi::registry reg;
+    // transient collection NOT registered
+    reg.add_singleton<IHost, Host>(
+        librtdi::deps<librtdi::collection<librtdi::transient<IPlugin>>>);
+    auto r = reg.build(); // default allows empty
+    auto* h = dynamic_cast<Host*>(&r->get<IHost>());
+    REQUIRE(h != nullptr);
+    REQUIRE(h->count_ == 0);
+}
+
+TEST_CASE("empty transient collection dep rejected in strict mode", "[validation]") {
+    struct IPlugin {
+        virtual ~IPlugin() = default;
+    };
+    struct IHost {
+        virtual ~IHost() = default;
+    };
+    struct Host : IHost {
+        explicit Host(std::vector<std::unique_ptr<IPlugin>> ps) {}
+    };
+
+    librtdi::registry reg;
+    reg.add_singleton<IHost, Host>(
+        librtdi::deps<librtdi::collection<librtdi::transient<IPlugin>>>);
+    REQUIRE_THROWS_AS(
+        reg.build({.allow_empty_collections = false}),
+        librtdi::not_found);
 }
 
 // ---------------------------------------------------------------

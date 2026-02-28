@@ -35,9 +35,17 @@ auto build_slot_index(const std::vector<descriptor>& descriptors) {
 void check_missing_dependencies(
         const std::vector<descriptor>& descriptors,
         const std::map<slot_key, std::vector<std::size_t>>& slot_idx,
+        const build_options& options,
         std::source_location loc) {
     for (auto& desc : descriptors) {
         for (auto& dep : desc.dependencies) {
+            // Collection dependencies are implicitly optional when
+            // allow_empty_collections is true (the industry default).
+            // The resolver's get_all / create_all already return empty
+            // vectors for unregistered collections, so skipping them
+            // here keeps build-time validation consistent with runtime.
+            if (dep.is_collection && options.allow_empty_collections)
+                continue;
             auto needed_lt = dep.is_transient ? lifetime_kind::transient
                                               : lifetime_kind::singleton;
             slot_key needed{dep.type, "" /* deps always empty key */,
@@ -183,7 +191,7 @@ void validate_descriptors(const std::vector<descriptor>& descriptors,
                           std::source_location loc) {
     auto slot_idx = build_slot_index(descriptors);
 
-    check_missing_dependencies(descriptors, slot_idx, loc);
+    check_missing_dependencies(descriptors, slot_idx, options, loc);
 
     if (options.validate_lifetimes) {
         check_lifetime_rules(descriptors, loc);
