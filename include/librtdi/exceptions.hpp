@@ -33,9 +33,22 @@ public:
     /// Return what() plus diagnostic detail (if present), separated by newline.
     LIBRTDI_EXPORT std::string full_diagnostic() const;
 
+    /// Append resolution context to this exception.  When a factory throws
+    /// during dependency resolution, each enclosing resolver layer appends
+    /// its component info so that the final what() message shows the full
+    /// resolution chain, e.g.:
+    ///   "... (while resolving B [impl: BImpl]) (while resolving A [impl: AImpl])"
+    /// May be called multiple times for nested resolution chains.
+    void append_resolution_context(const std::string& component_info);
+
+    /// Override to append resolution context (if any) to the base message.
+    const char* what() const noexcept override;
+
 private:
     std::source_location location_;
     std::string diagnostic_detail_;
+    std::string resolution_context_;
+    mutable std::string cached_what_;
 
     static std::string format_message(const std::string& msg,
                                       const std::source_location& loc);

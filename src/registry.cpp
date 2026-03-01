@@ -31,6 +31,9 @@ struct registry::Impl {
         std::optional<std::type_index> target_impl;
         registry::decorator_wrapper wrapper;
         std::vector<dependency_info> extra_deps;
+        std::source_location loc;
+        std::any stacktrace;
+        std::string api_name;
     };
     std::vector<DecoratorEntry> decorators;
 
@@ -40,6 +43,9 @@ struct registry::Impl {
         std::type_index target_type;
         forward_cast_fn cast;
         void (*forward_deleter)(void*) = nullptr;
+        std::source_location loc;
+        std::any stacktrace;
+        std::string api_name;
     };
     std::vector<ForwardEntry> forwards;
 
@@ -75,7 +81,8 @@ registry& registry::register_single(
         std::type_index type, lifetime_kind lifetime,
         factory_fn factory, std::vector<dependency_info> deps,
         std::string key, std::optional<std::type_index> impl_type,
-        std::source_location loc) {
+        std::source_location loc, std::any stacktrace,
+        std::string api_name) {
     if (impl_->built) {
         throw di_error("Cannot register components after build() has been called", loc);
     }
@@ -95,7 +102,8 @@ registry& registry::register_single(
     impl_->descriptors.push_back(descriptor{
         type, lifetime, std::move(factory), std::move(deps),
         std::move(key), /*is_collection=*/false, std::move(impl_type),
-        std::nullopt, nullptr, loc, internal::capture_stacktrace()
+        std::nullopt, nullptr, loc, std::move(stacktrace),
+        std::move(api_name)
     });
     return *this;
 }
@@ -108,7 +116,8 @@ registry& registry::register_collection(
         std::type_index type, lifetime_kind lifetime,
         factory_fn factory, std::vector<dependency_info> deps,
         std::string key, std::optional<std::type_index> impl_type,
-        std::source_location loc) {
+        std::source_location loc, std::any stacktrace,
+        std::string api_name) {
     if (impl_->built) {
         throw di_error("Cannot register components after build() has been called", loc);
     }
@@ -119,7 +128,8 @@ registry& registry::register_collection(
     impl_->descriptors.push_back(descriptor{
         type, lifetime, std::move(factory), std::move(deps),
         std::move(key), /*is_collection=*/true, std::move(impl_type),
-        std::nullopt, nullptr, loc, internal::capture_stacktrace()
+        std::nullopt, nullptr, loc, std::move(stacktrace),
+        std::move(api_name)
     });
     return *this;
 }
@@ -133,12 +143,15 @@ registry& registry::register_forward(
         std::type_index target_type,
         forward_cast_fn cast,
         void (*forward_deleter)(void*),
-        std::source_location loc) {
+        std::source_location loc,
+        std::any stacktrace,
+        std::string api_name) {
     if (impl_->built) {
         throw di_error("Cannot register components after build() has been called", loc);
     }
     impl_->forwards.push_back({interface_type, target_type, std::move(cast),
-                               forward_deleter});
+                               forward_deleter, loc, std::move(stacktrace),
+                               std::move(api_name)});
     return *this;
 }
 
@@ -151,12 +164,16 @@ registry& registry::register_decorator(
         std::optional<std::type_index> target_impl,
         decorator_wrapper wrapper,
         std::vector<dependency_info> extra_deps,
-        std::source_location loc) {
+        std::source_location loc,
+        std::any stacktrace,
+        std::string api_name) {
     if (impl_->built) {
         throw di_error("Cannot register decorators after build() has been called", loc);
     }
     impl_->decorators.push_back({interface_type, std::move(target_impl),
-                                  std::move(wrapper), std::move(extra_deps)});
+                                  std::move(wrapper), std::move(extra_deps),
+                                  loc, std::move(stacktrace),
+                                  std::move(api_name)});
     return *this;
 }
 
@@ -190,7 +207,7 @@ std::shared_ptr<resolver> registry::build(build_options options, std::source_loc
 
                 if (target.lifetime == lifetime_kind::singleton) {
                     // Singleton: delegate to the same cached instance
-                    expanded.emplace_back(
+                    descriptor fwd_desc{
                         fwd.interface_type,
                         lifetime_kind::singleton,
                         [target_idx, cast](resolver& r) -> erased_ptr {
@@ -206,15 +223,19 @@ std::shared_ptr<resolver> registry::build(build_options options, std::source_loc
                         target.is_collection,
                         target.impl_type,
                         fwd.target_type,
-                        cast
-                    );
+                        cast,
+                        fwd.loc,
+                        fwd.stacktrace,
+                        fwd.api_name
+                    };
+                    expanded.push_back(std::move(fwd_desc));
                 } else {
                     // Transient: create fresh via target, then cast.
                     // The forward_deleter performs `delete static_cast<TInterface*>(p)`
                     // which works correctly under all inheritance models (single, MI,
                     // virtual) because TInterface has a virtual destructor.
                     auto fwd_deleter = fwd.forward_deleter;
-                    expanded.emplace_back(
+                    descriptor fwd_desc{
                         fwd.interface_type,
                         lifetime_kind::transient,
                         [target_idx, cast, fwd_deleter](resolver& r) -> erased_ptr {
@@ -229,20 +250,26 @@ std::shared_ptr<resolver> registry::build(build_options options, std::source_loc
                         target.is_collection,
                         target.impl_type,
                         fwd.target_type,
-                        cast
-                    );
+                        cast,
+                        fwd.loc,
+                        fwd.stacktrace,
+                        fwd.api_name
+                    };
+                    expanded.push_back(std::move(fwd_desc));
                 }
             }
             if (!found_any) {
                 // Add placeholder so validation detects missing dependency
-                expanded.emplace_back(
+                descriptor placeholder{
                     fwd.interface_type, lifetime_kind::transient,
                     [](resolver&) -> erased_ptr { return {}; },
                     std::vector<dependency_info>{dependency_info{fwd.target_type, false, false} },
                     std::string{},
                     false, std::nullopt,
-                    fwd.target_type, forward_cast_fn{}
-                );
+                    fwd.target_type, forward_cast_fn{},
+                    fwd.loc, fwd.stacktrace, fwd.api_name
+                };
+                expanded.push_back(std::move(placeholder));
             }
         }
 

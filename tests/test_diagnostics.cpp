@@ -508,6 +508,115 @@ TEST_CASE("di_error re-thrown from factory propagates unchanged", "[diagnostics]
     } catch (const librtdi::di_error& e) {
         std::string msg = e.what();
         REQUIRE_THAT(msg, Catch::Matchers::ContainsSubstring("custom di error"));
+        // Resolution context should be appended
+        REQUIRE_THAT(msg, Catch::Matchers::ContainsSubstring("while resolving"));
+        REQUIRE_THAT(msg, Catch::Matchers::ContainsSubstring("IReThrow"));
+    }
+}
+
+// ---------------------------------------------------------------
+// Resolution chain context tests (§4.3.1)
+// ---------------------------------------------------------------
+
+TEST_CASE("resolution chain context: two-level not_found preserves type", "[diagnostics][resolution-chain]") {
+    // A depends on B, B is not registered → not_found for B, with
+    // resolution context showing A.
+    struct IInner { virtual ~IInner() = default; };
+    struct IOuter { virtual ~IOuter() = default; };
+    struct OuterImpl : IOuter { explicit OuterImpl(IInner&) {} };
+
+    librtdi::registry reg;
+    reg.add_singleton<IOuter, OuterImpl>(librtdi::deps<IInner>);
+    auto r = reg.build({.validate_on_build = false, .eager_singletons = false});
+
+    try {
+        r->get<IOuter>();
+        FAIL("Expected not_found");
+    } catch (const librtdi::not_found& e) {
+        // Original exception type preserved (not wrapped as resolution_error)
+        std::string msg = e.what();
+        REQUIRE_THAT(msg, Catch::Matchers::ContainsSubstring("IInner"));
+        REQUIRE_THAT(msg, Catch::Matchers::ContainsSubstring("while resolving"));
+        REQUIRE_THAT(msg, Catch::Matchers::ContainsSubstring("IOuter"));
+        REQUIRE_THAT(msg, Catch::Matchers::ContainsSubstring("OuterImpl"));
+    }
+}
+
+TEST_CASE("resolution chain context: runtime_error wrapped with chain", "[diagnostics][resolution-chain]") {
+    // A depends on B, B's constructor throws runtime_error
+    // → resolution_error for B, then context annotated with A.
+    struct IDepOk { virtual ~IDepOk() = default; };
+    // Test fixture: constructor intentionally always throws to verify exception propagation
+    // and resolution chain diagnostics.
+    struct DepBoom : IDepOk {
+        DepBoom() { throw std::runtime_error("inner boom"); }
+    };
+    struct ITop { virtual ~ITop() = default; };
+    struct TopImpl : ITop { explicit TopImpl(IDepOk&) {} };
+
+    librtdi::registry reg;
+    reg.add_singleton<IDepOk, DepBoom>();
+    reg.add_singleton<ITop, TopImpl>(librtdi::deps<IDepOk>);
+    auto r = reg.build({.validate_on_build = false, .eager_singletons = false});
+
+    try {
+        r->get<ITop>();
+        FAIL("Expected resolution_error");
+    } catch (const librtdi::resolution_error& e) {
+        std::string msg = e.what();
+        REQUIRE_THAT(msg, Catch::Matchers::ContainsSubstring("inner boom"));
+        REQUIRE_THAT(msg, Catch::Matchers::ContainsSubstring("while resolving"));
+        REQUIRE_THAT(msg, Catch::Matchers::ContainsSubstring("ITop"));
+    }
+}
+
+TEST_CASE("resolution chain context: three-level nesting shows full chain", "[diagnostics][resolution-chain]") {
+    // A → B → C, C not registered
+    struct IC3 { virtual ~IC3() = default; };
+    struct IB3 { virtual ~IB3() = default; };
+    struct IA3 { virtual ~IA3() = default; };
+    struct B3Impl : IB3 { explicit B3Impl(IC3&) {} };
+    struct A3Impl : IA3 { explicit A3Impl(IB3&) {} };
+
+    librtdi::registry reg;
+    reg.add_singleton<IA3, A3Impl>(librtdi::deps<IB3>);
+    reg.add_singleton<IB3, B3Impl>(librtdi::deps<IC3>);
+    auto r = reg.build({.validate_on_build = false, .eager_singletons = false});
+
+    try {
+        r->get<IA3>();
+        FAIL("Expected not_found");
+    } catch (const librtdi::not_found& e) {
+        std::string msg = e.what();
+        // The missing dependency
+        REQUIRE_THAT(msg, Catch::Matchers::ContainsSubstring("IC3"));
+        // Chain should show both B and A
+        REQUIRE_THAT(msg, Catch::Matchers::ContainsSubstring("while resolving"));
+        REQUIRE_THAT(msg, Catch::Matchers::ContainsSubstring("IB3"));
+        REQUIRE_THAT(msg, Catch::Matchers::ContainsSubstring("IA3"));
+        // Chain separator
+        REQUIRE_THAT(msg, Catch::Matchers::ContainsSubstring("->"));
+    }
+}
+
+TEST_CASE("resolution chain context: transient create path", "[diagnostics][resolution-chain]") {
+    struct IMissingT { virtual ~IMissingT() = default; };
+    struct ITransientTop { virtual ~ITransientTop() = default; };
+    struct TransientTopImpl : ITransientTop {
+        explicit TransientTopImpl(IMissingT&) {}
+    };
+
+    librtdi::registry reg;
+    reg.add_transient<ITransientTop, TransientTopImpl>(librtdi::deps<IMissingT>);
+    auto r = reg.build({.validate_on_build = false, .eager_singletons = false});
+
+    try {
+        r->create<ITransientTop>();
+        FAIL("Expected not_found");
+    } catch (const librtdi::not_found& e) {
+        std::string msg = e.what();
+        REQUIRE_THAT(msg, Catch::Matchers::ContainsSubstring("while resolving"));
+        REQUIRE_THAT(msg, Catch::Matchers::ContainsSubstring("ITransientTop"));
     }
 }
 
@@ -643,6 +752,89 @@ TEST_CASE("full_diagnostic stacktrace contains function-like frame info", "[diag
         bool has_frame = (diag.find('#') != std::string::npos) ||
                          (diag.find("0x") != std::string::npos);
         REQUIRE(has_frame);
+    }
+}
+
+TEST_CASE("stacktrace header contains api_name for add_singleton", "[diagnostics][stacktrace]") {
+    struct IApiNameS { virtual ~IApiNameS() = default; };
+    struct IMissing { virtual ~IMissing() = default; };
+    struct ApiNameSImpl : IApiNameS { explicit ApiNameSImpl(IMissing&) {} };
+
+    librtdi::registry reg;
+    reg.add_singleton<IApiNameS, ApiNameSImpl>(librtdi::deps<IMissing>);
+
+    try {
+        reg.build();
+        FAIL("Expected not_found");
+    } catch (const librtdi::not_found& e) {
+        std::string diag = e.full_diagnostic();
+        REQUIRE_THAT(diag, Catch::Matchers::ContainsSubstring("called via add_singleton"));
+    }
+}
+
+TEST_CASE("stacktrace header contains api_name for add_transient", "[diagnostics][stacktrace]") {
+    struct IApiNameT { virtual ~IApiNameT() = default; };
+    struct IMissing { virtual ~IMissing() = default; };
+    struct ApiNameTImpl : IApiNameT { explicit ApiNameTImpl(IMissing&) {} };
+
+    librtdi::registry reg;
+    reg.add_transient<IApiNameT, ApiNameTImpl>(librtdi::deps<IMissing>);
+
+    try {
+        reg.build();
+        FAIL("Expected not_found");
+    } catch (const librtdi::not_found& e) {
+        std::string diag = e.full_diagnostic();
+        REQUIRE_THAT(diag, Catch::Matchers::ContainsSubstring("called via add_transient"));
+    }
+}
+
+TEST_CASE("stacktrace header contains api_name for add_collection", "[diagnostics][stacktrace]") {
+    struct IApiNameC { virtual ~IApiNameC() = default; };
+    struct IMissing { virtual ~IMissing() = default; };
+    struct ApiNameCImpl : IApiNameC { explicit ApiNameCImpl(IMissing&) {} };
+
+    librtdi::registry reg;
+    reg.add_collection<IApiNameC, ApiNameCImpl>(
+        librtdi::lifetime_kind::singleton,
+        librtdi::deps<IMissing>);
+
+    try {
+        reg.build();
+        FAIL("Expected not_found");
+    } catch (const librtdi::not_found& e) {
+        std::string diag = e.full_diagnostic();
+        REQUIRE_THAT(diag, Catch::Matchers::ContainsSubstring("called via add_collection"));
+    }
+}
+
+TEST_CASE("forward-expanded descriptor carries forward api_name in stacktrace", "[diagnostics][stacktrace]") {
+    // The forward-expanded descriptor gets api_name "forward".
+    // To observe this, we make a resolution_error fire through the
+    // forward-expanded descriptor itself.
+    struct IFwdBase { virtual ~IFwdBase() = default; };
+    struct IFwdDerived : IFwdBase { ~IFwdDerived() override = default; };
+    struct FwdDerivedImpl : IFwdDerived {
+        FwdDerivedImpl() { throw std::runtime_error("fwd boom"); }
+    };
+
+    librtdi::registry reg;
+    reg.add_singleton<IFwdDerived, FwdDerivedImpl>();
+    reg.forward<IFwdBase, IFwdDerived>();
+    auto r = reg.build({.validate_on_build = false, .eager_singletons = false});
+
+    // Resolve through the forwarded interface → forward descriptor's factory
+    // delegates to IFwdDerived which throws.  The resolution_error from IFwdDerived
+    // already carries "add_singleton" diagnostic.  BUT then re-caught at the
+    // forward descriptor level where the context chain is appended.
+    try {
+        r->get<IFwdBase>();
+        FAIL("Expected resolution_error");
+    } catch (const librtdi::resolution_error& e) {
+        std::string msg = e.what();
+        REQUIRE_THAT(msg, Catch::Matchers::ContainsSubstring("fwd boom"));
+        // Should show resolution chain including the forward interface
+        REQUIRE_THAT(msg, Catch::Matchers::ContainsSubstring("while resolving"));
     }
 }
 

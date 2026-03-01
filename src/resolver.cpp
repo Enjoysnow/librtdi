@@ -87,7 +87,21 @@ void* resolver::resolve_singleton_by_index(std::size_t idx) {
     erased_ptr instance;
     try {
         instance = desc.factory(*this);
-    } catch (const di_error&) {
+    } catch (di_error& e) {
+        // Annotate with resolution context so nested failures show the
+        // full chain: "... (while resolving B -> A)". We intentionally catch
+        // di_error by non-const reference so we can enrich the exception
+        // (e.g., append_resolution_context / set_diagnostic_detail) before
+        // rethrowing it.
+        std::string ctx = internal::demangle(desc.component_type);
+        if (desc.impl_type.has_value()) {
+            ctx += " [impl: " + internal::demangle(desc.impl_type.value()) + "]";
+        }
+        e.append_resolution_context(ctx);
+        if (e.diagnostic_detail().empty()) {
+            auto trace = internal::format_registration_trace(desc);
+            if (!trace.empty()) e.set_diagnostic_detail(trace);
+        }
         throw;
     } catch (const std::exception& e) {
         auto ex = resolution_error(desc.component_type, e,
@@ -111,7 +125,18 @@ erased_ptr resolver::resolve_transient_by_index(std::size_t idx) {
 
     try {
         return desc.factory(*this);
-    } catch (const di_error&) {
+    } catch (di_error& e) {
+        // Annotate with resolution context so nested failures show the
+        // full chain: "... (while resolving B -> A)"
+        std::string ctx = internal::demangle(desc.component_type);
+        if (desc.impl_type.has_value()) {
+            ctx += " [impl: " + internal::demangle(desc.impl_type.value()) + "]";
+        }
+        e.append_resolution_context(ctx);
+        if (e.diagnostic_detail().empty()) {
+            auto trace = internal::format_registration_trace(desc);
+            if (!trace.empty()) e.set_diagnostic_detail(trace);
+        }
         throw;
     } catch (const std::exception& e) {
         auto ex = resolution_error(desc.component_type, e,

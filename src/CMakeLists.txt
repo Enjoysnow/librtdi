@@ -3,6 +3,7 @@ add_library(librtdi SHARED
     resolver.cpp
     validation.cpp
     exceptions.cpp
+    stacktrace_capture.cpp
 )
 
 target_include_directories(librtdi

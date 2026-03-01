@@ -195,6 +195,16 @@ registry 提供以下注册方法，所有方法均返回 `registry&`（支持�
 - 工厂返回类型擦除的 `erased_ptr`；框架在类型安全边界处通过 `static_cast<T*>` 恢复类型
 - 工厂执行时若抛出异常：若异常属于 `di_error` 子类（如 `not_found`），框架直接透传不做二次包装；其他 `std::exception` 子类则包装为 `resolution_error` 再向上传播；非 `std::exception` 的异常原样透传，不做任何包装
 
+#### 4.3.1 解析链上下文标注
+
+当工厂在解析依赖过程中抛出 `di_error` 子类异常时，框架在每层 `resolve_*_by_index` 中对该异常调用 `append_resolution_context()`，附加当前正在解析的组件信息（demangled 类型名 + 实现类型名）。最终 `what()` 输出形如：
+
+```
+Component not found: IC [...] (while resolving IB [impl: BImpl] -> IA [impl: AImpl])
+```
+
+多层嵌套解析会产生完整的解析链（箭头方向从内层到外层），便于定位异常源头及其在依赖图中的路径。此标注保留原始异常类型不变（`not_found` 仍为 `not_found`），仅在 `what()` 返回值中追加上下文信息。
+
 ### 4.4 单实例槽位唯一性
 
 对同一 `(component_type, key, lifetime)` 的单实例槽位，第二次调用 `add_singleton` 或 `add_transient` 将抛 `duplicate_registration`。不同 lifetime 的单实例槽位相互独立，同一接口可以同时拥有 singleton 和 transient 注册。
@@ -544,12 +554,23 @@ std::runtime_error
 
 | 异常 | 必须携带 |
 |------|----------|
-| `di_error`（基类） | 消息字符串；`std::source_location`（用户调用处） |
+| `di_error`（基类） | 消息字符串；`std::source_location`（用户调用处）；可选解析链上下文（`resolution_context_`，通过 `append_resolution_context()` 追加） |
 | `not_found` | `type_index`（未找到的类型）；可选 key 字符串；可选诊断提示（consumer 信息或 slot_hint） |
 | `cyclic_dependency` | `vector<type_index>`（环路节点序列） |
 | `lifetime_mismatch` | 消费者 `type_index` + lifetime 名 + 可选 impl 类型名；依赖 `type_index` + lifetime 名 |
 | `duplicate_registration` | `type_index`；可选 key 字符串 |
 | `resolution_error` | `type_index`；内层异常的 `what()`；组件的注册位置（若可用） |
+
+#### 11.2.1 `di_error` 解析链上下文 API
+
+`di_error` 基类提供以下方法用于解析链追踪：
+
+| 方法 | 说明 |
+|------|------|
+| `append_resolution_context(const std::string& component_info)` | 追加一层解析上下文信息，可多次调用以构建完整链；每层之间以 `" -> "` 分隔 |
+| `what() const noexcept override` | 当存在解析上下文时，返回 `"<原始消息> (while resolving <链>)"`；否则退化为 `std::runtime_error::what()` |
+
+`what()` 使用惰性缓存实现（`mutable cached_what_`），首次调用时拼接，`append_resolution_context()` 调用后清除缓存。`what()` 内部使用 try/catch 保证 noexcept 语义。
 
 ### 11.3 错误消息可读性要求
 
@@ -580,7 +601,19 @@ std::runtime_error
 
 ### 11.8 注册调用栈追踪（Boost.Stacktrace）
 
-当 CMake 选项 `LIBRTDI_ENABLE_STACKTRACE`（默认 `ON`）启用且系统可找到 Boost.Stacktrace 时，每次 `register_single()` / `register_collection()` 都会通过 `boost::stacktrace::stacktrace()` 捕获完整调用栈，将其以 `std::any` 形式存入 `descriptor::registration_stacktrace` 字段。
+当 CMake 选项 `LIBRTDI_ENABLE_STACKTRACE`（默认 `ON`）启用且系统可找到 Boost.Stacktrace 时，所有公共注册 API（`add_singleton`、`add_transient`、`add_collection`、`forward`、`decorate`）都会在**头文件模板函数内部**调用 `internal::capture_stacktrace()` 捕获完整调用栈，将其以 `std::any` 形式存入 `descriptor::registration_stacktrace` 字段。
+
+#### 调用栈捕获位置与 API 名称
+
+`capture_stacktrace()` 声明在公有头文件 `descriptor.hpp` 的 `librtdi::internal` 命名空间中，实现在 `src/stacktrace_capture.cpp` 中（编译时使用 `LIBRTDI_HAS_STACKTRACE` PRIVATE 宏）。捕获发生在公共 API 模板函数体内（而非 `register_*` 内部实现），因此栈帧的第一帧即为用户调用公共 API 的位置。
+
+每个 `descriptor` 还携带 `api_name` 字段（如 `"add_singleton"`、`"forward"`、`"decorate"`），由公共 API 模板在注册时设置。诊断输出的调用栈标题行格式为：
+
+```
+Registration stacktrace for MyType [impl: Impl] (called via add_singleton):
+  #0 ...
+  #1 ...
+```
 
 #### 公有 API
 
@@ -592,10 +625,10 @@ std::runtime_error
 
 #### 行为规则
 
-1. **捕获时机**：调用栈在 `register_single()` / `register_collection()` 内部捕获，保留了从用户代码到注册点的完整帧链。
+1. **捕获时机**：调用栈在公共 API 模板函数内部捕获（`add_singleton`、`add_transient`、`add_collection`、`forward`、`decorate`），保留了从用户代码到公共 API 入口的完整帧链。`forward` 和 `decorate` 同样捕获调用栈，在展开或应用时传播到生成的 descriptor 中。
 2. **附着时机**：当 `build()` 验证阶段或 `resolve_*_by_index` 运行时抛出异常时，库自动从相关 `descriptor` 中提取调用栈并通过 `set_diagnostic_detail()` 附着到异常上。
 3. **涉及的异常类型**：`not_found`、`lifetime_mismatch`、`cyclic_dependency`、`resolution_error`。
-4. **ABI 隔离**：`descriptor::registration_stacktrace` 类型为 `std::any`，Boost 头文件仅在 `src/` 内部包含（`stacktrace_utils.hpp`），不泄漏到公有头文件中。
+4. **ABI 隔离**：`descriptor::registration_stacktrace` 类型为 `std::any`，Boost 头文件仅在 `src/` 内部包含（`stacktrace_utils.hpp`），不泄漏到公有头文件中。`capture_stacktrace()` 函数声明在公有头文件中但实现在 `.cpp` 文件中，确保 Boost 依赖不传播给下游代码。
 5. **编译定义**：`LIBRTDI_HAS_STACKTRACE`（PRIVATE，编译库时使用）、`LIBRTDI_STACKTRACE_AVAILABLE`（PUBLIC，下游代码可用于条件编译）。
 6. **后端选择**：优先使用 `stacktrace_backtrace`（符号解析更完整），退而使用 `stacktrace_basic`。
 7. **关闭方式**：`cmake -DLIBRTDI_ENABLE_STACKTRACE=OFF ..` 将跳过 Boost 查找，所有捕获函数返回空 `std::any`，`full_diagnostic()` 退化为 `what()`。

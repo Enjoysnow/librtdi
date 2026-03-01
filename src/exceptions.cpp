@@ -44,6 +44,29 @@ void di_error::set_diagnostic_detail(std::string detail) {
     diagnostic_detail_ = std::move(detail);
 }
 
+void di_error::append_resolution_context(const std::string& component_info) {
+    if (!resolution_context_.empty()) {
+        resolution_context_ += " -> ";
+    }
+    resolution_context_ += component_info;
+    cached_what_.clear();
+}
+
+const char* di_error::what() const noexcept {
+    if (resolution_context_.empty()) {
+        return std::runtime_error::what();
+    }
+    if (cached_what_.empty()) {
+        try {
+            cached_what_ = std::string(std::runtime_error::what())
+                           + " (while resolving " + resolution_context_ + ")";
+        } catch (...) {
+            return std::runtime_error::what();
+        }
+    }
+    return cached_what_.c_str();
+}
+
 std::string di_error::full_diagnostic() const {
     if (diagnostic_detail_.empty()) {
         return what();

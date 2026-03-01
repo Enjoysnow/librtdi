@@ -3,6 +3,7 @@
 #include "fwd.hpp"
 #include "lifetime.hpp"
 #include "erased_ptr.hpp"
+#include "export.hpp"
 
 #include <any>
 #include <functional>
@@ -17,6 +18,14 @@ namespace librtdi {
 using factory_fn = std::function<erased_ptr(resolver&)>;
 
 using forward_cast_fn = std::function<void*(void*)>;
+
+namespace internal {
+/// Capture a stacktrace at the current call site.
+/// Returns a populated std::any when stacktrace support is enabled,
+/// or an empty std::any otherwise.  Implemented in a .cpp file so
+/// that Boost headers are not required in public headers.
+LIBRTDI_EXPORT std::any capture_stacktrace();
+} // namespace internal
 
 // ---------------------------------------------------------------
 // build_options — controls build-time behaviour
@@ -67,6 +76,10 @@ struct descriptor {
     /// Contains boost::stacktrace::stacktrace when LIBRTDI_HAS_STACKTRACE is
     /// defined; empty std::any otherwise. Accessed via internal helpers only.
     std::any registration_stacktrace;
+
+    /// Name of the public API that created this descriptor (e.g. "add_singleton",
+    /// "forward", "decorate").  Used in diagnostic stacktrace output headers.
+    std::string api_name;
 };
 
 } // namespace librtdi

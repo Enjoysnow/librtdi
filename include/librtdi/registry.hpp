@@ -97,7 +97,8 @@ public:
         return register_single(
             typeid(TInterface), lifetime_kind::singleton,
             [](resolver&) -> erased_ptr { return make_erased_as<TInterface, TImpl>(); },
-            {}, {}, std::type_index(typeid(TImpl)), loc);
+            {}, {}, std::type_index(typeid(TImpl)), loc,
+            internal::capture_stacktrace(), "add_singleton");
     }
 
     /// Singleton with deps
@@ -114,7 +115,8 @@ public:
                 return make_erased_as<TInterface, TImpl>(detail::resolve_dep<Deps>(r)...);
             },
             detail::make_dep_infos<Deps...>(), {},
-            std::type_index(typeid(TImpl)), loc);
+            std::type_index(typeid(TImpl)), loc,
+            internal::capture_stacktrace(), "add_singleton");
     }
 
     /// Keyed zero-dep singleton
@@ -128,7 +130,8 @@ public:
         return register_single(
             typeid(TInterface), lifetime_kind::singleton,
             [](resolver&) -> erased_ptr { return make_erased_as<TInterface, TImpl>(); },
-            {}, std::string(key), std::type_index(typeid(TImpl)), loc);
+            {}, std::string(key), std::type_index(typeid(TImpl)), loc,
+            internal::capture_stacktrace(), "add_singleton");
     }
 
     /// Keyed singleton with deps
@@ -145,7 +148,8 @@ public:
                 return make_erased_as<TInterface, TImpl>(detail::resolve_dep<Deps>(r)...);
             },
             detail::make_dep_infos<Deps...>(), std::string(key),
-            std::type_index(typeid(TImpl)), loc);
+            std::type_index(typeid(TImpl)), loc,
+            internal::capture_stacktrace(), "add_singleton");
     }
 
     // ===============================================================
@@ -162,7 +166,8 @@ public:
         return register_single(
             typeid(TInterface), lifetime_kind::transient,
             [](resolver&) -> erased_ptr { return make_erased_as<TInterface, TImpl>(); },
-            {}, {}, std::type_index(typeid(TImpl)), loc);
+            {}, {}, std::type_index(typeid(TImpl)), loc,
+            internal::capture_stacktrace(), "add_transient");
     }
 
     template <typename TInterface, typename TImpl, typename... Deps>
@@ -178,7 +183,8 @@ public:
                 return make_erased_as<TInterface, TImpl>(detail::resolve_dep<Deps>(r)...);
             },
             detail::make_dep_infos<Deps...>(), {},
-            std::type_index(typeid(TImpl)), loc);
+            std::type_index(typeid(TImpl)), loc,
+            internal::capture_stacktrace(), "add_transient");
     }
 
     template <typename TInterface, typename TImpl>
@@ -191,7 +197,8 @@ public:
         return register_single(
             typeid(TInterface), lifetime_kind::transient,
             [](resolver&) -> erased_ptr { return make_erased_as<TInterface, TImpl>(); },
-            {}, std::string(key), std::type_index(typeid(TImpl)), loc);
+            {}, std::string(key), std::type_index(typeid(TImpl)), loc,
+            internal::capture_stacktrace(), "add_transient");
     }
 
     template <typename TInterface, typename TImpl, typename... Deps>
@@ -207,7 +214,8 @@ public:
                 return make_erased_as<TInterface, TImpl>(detail::resolve_dep<Deps>(r)...);
             },
             detail::make_dep_infos<Deps...>(), std::string(key),
-            std::type_index(typeid(TImpl)), loc);
+            std::type_index(typeid(TImpl)), loc,
+            internal::capture_stacktrace(), "add_transient");
     }
 
     // ===============================================================
@@ -224,7 +232,8 @@ public:
         return register_collection(
             typeid(TInterface), lifetime,
             [](resolver&) -> erased_ptr { return make_erased_as<TInterface, TImpl>(); },
-            {}, {}, std::type_index(typeid(TImpl)), loc);
+            {}, {}, std::type_index(typeid(TImpl)), loc,
+            internal::capture_stacktrace(), "add_collection");
     }
 
     template <typename TInterface, typename TImpl, typename... Deps>
@@ -240,7 +249,8 @@ public:
                 return make_erased_as<TInterface, TImpl>(detail::resolve_dep<Deps>(r)...);
             },
             detail::make_dep_infos<Deps...>(), {},
-            std::type_index(typeid(TImpl)), loc);
+            std::type_index(typeid(TImpl)), loc,
+            internal::capture_stacktrace(), "add_collection");
     }
 
     template <typename TInterface, typename TImpl>
@@ -253,7 +263,8 @@ public:
         return register_collection(
             typeid(TInterface), lifetime,
             [](resolver&) -> erased_ptr { return make_erased_as<TInterface, TImpl>(); },
-            {}, std::string(key), std::type_index(typeid(TImpl)), loc);
+            {}, std::string(key), std::type_index(typeid(TImpl)), loc,
+            internal::capture_stacktrace(), "add_collection");
     }
 
     template <typename TInterface, typename TImpl, typename... Deps>
@@ -269,7 +280,8 @@ public:
                 return make_erased_as<TInterface, TImpl>(detail::resolve_dep<Deps>(r)...);
             },
             detail::make_dep_infos<Deps...>(), std::string(key),
-            std::type_index(typeid(TImpl)), loc);
+            std::type_index(typeid(TImpl)), loc,
+            internal::capture_stacktrace(), "add_collection");
     }
 
     // ===============================================================
@@ -289,7 +301,7 @@ public:
                 return static_cast<TInterface*>(static_cast<TTarget*>(raw));
             },
             [](void* p) { delete static_cast<TInterface*>(p); },
-            loc);
+            loc, internal::capture_stacktrace(), "forward");
     }
 
     // ===============================================================
@@ -313,7 +325,7 @@ public:
                     return make_erased_as<TInterface, TDecorator>(std::move(handle));
                 };
             },
-            {}, loc);
+            {}, loc, internal::capture_stacktrace(), "decorate");
     }
 
     /// Decorate all of I with D, with extra deps.
@@ -335,7 +347,8 @@ public:
                         detail::resolve_dep<Extra>(r)...);
                 };
             },
-            detail::make_dep_infos<Extra...>(), loc);
+            detail::make_dep_infos<Extra...>(), loc,
+            internal::capture_stacktrace(), "decorate");
     }
 
     /// Decorate a specific impl of I with D (no extra deps).
@@ -355,7 +368,7 @@ public:
                     return make_erased_as<TInterface, TDecorator>(std::move(handle));
                 };
             },
-            {}, loc);
+            {}, loc, internal::capture_stacktrace(), "decorate");
     }
 
     /// Decorate a specific impl of I with D, with extra deps.
@@ -377,7 +390,8 @@ public:
                         detail::resolve_dep<Extra>(r)...);
                 };
             },
-            detail::make_dep_infos<Extra...>(), loc);
+            detail::make_dep_infos<Extra...>(), loc,
+            internal::capture_stacktrace(), "decorate");
     }
 
     /// Decorate a specific impl TTarget of I with D (type-safe target, no extra deps).
@@ -399,7 +413,7 @@ public:
                     return make_erased_as<TInterface, TDecorator>(std::move(handle));
                 };
             },
-            {}, loc);
+            {}, loc, internal::capture_stacktrace(), "decorate_target");
     }
 
     /// Decorate a specific impl TTarget of I with D (type-safe target, with extra deps).
@@ -423,7 +437,8 @@ public:
                         detail::resolve_dep<Extra>(r)...);
                 };
             },
-            detail::make_dep_infos<Extra...>(), loc);
+            detail::make_dep_infos<Extra...>(), loc,
+            internal::capture_stacktrace(), "decorate_target");
     }
 
     // ===============================================================
@@ -442,7 +457,9 @@ private:
                               std::vector<dependency_info> deps,
                               std::string key,
                               std::optional<std::type_index> impl_type,
-                              std::source_location loc);
+                              std::source_location loc,
+                              std::any stacktrace,
+                              std::string api_name);
 
     // Collection slot registration (0..N per (type, key, lifetime))
     registry& register_collection(std::type_index type, lifetime_kind lifetime,
@@ -450,14 +467,18 @@ private:
                                   std::vector<dependency_info> deps,
                                   std::string key,
                                   std::optional<std::type_index> impl_type,
-                                  std::source_location loc);
+                                  std::source_location loc,
+                                  std::any stacktrace,
+                                  std::string api_name);
 
     // Forward registration
     registry& register_forward(std::type_index interface_type,
                                std::type_index target_type,
                                forward_cast_fn cast,
                                void (*forward_deleter)(void*),
-                               std::source_location loc);
+                               std::source_location loc,
+                               std::any stacktrace,
+                               std::string api_name);
 
     using decorator_wrapper = std::function<factory_fn(factory_fn)>;
 
@@ -465,7 +486,9 @@ private:
                                  std::optional<std::type_index> target_impl,
                                  decorator_wrapper wrapper,
                                  std::vector<dependency_info> extra_deps,
-                                 std::source_location loc);
+                                 std::source_location loc,
+                                 std::any stacktrace,
+                                 std::string api_name);
 
     struct Impl;
     std::unique_ptr<Impl> impl_;

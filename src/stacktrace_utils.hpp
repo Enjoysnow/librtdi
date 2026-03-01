@@ -16,16 +16,8 @@
 
 namespace librtdi::internal {
 
-/// Capture a stacktrace at the current call site.
-/// Returns a populated std::any when LIBRTDI_HAS_STACKTRACE is defined,
-/// or an empty std::any otherwise.
-inline std::any capture_stacktrace() {
-#ifdef LIBRTDI_HAS_STACKTRACE
-    return std::any(boost::stacktrace::stacktrace());
-#else
-    return {};
-#endif
-}
+// capture_stacktrace() is declared in descriptor.hpp (public header)
+// and implemented in stacktrace_capture.cpp.  No inline definition here.
 
 /// Format a stacktrace stored in a std::any into a human-readable string.
 /// Returns an empty string if the any is empty or stacktrace support is
@@ -53,7 +45,7 @@ inline std::string format_stacktrace(const std::any& st) {
 
 /// Format one descriptor's registration trace for diagnostic output.
 /// Returns a block like:
-///   "Registration stacktrace for MyType:\n  #0 ...\n  #1 ...\n"
+///   "Registration stacktrace for MyType [impl: Impl] (called via add_singleton):\n  #0 ...\n"
 /// or an empty string if no stacktrace is available.
 inline std::string format_registration_trace(const descriptor& desc) {
     std::string trace = format_stacktrace(desc.registration_stacktrace);
@@ -63,6 +55,9 @@ inline std::string format_registration_trace(const descriptor& desc) {
                          + demangle(desc.component_type);
     if (desc.impl_type.has_value()) {
         header += " [impl: " + demangle(desc.impl_type.value()) + "]";
+    }
+    if (!desc.api_name.empty()) {
+        header += " (called via " + desc.api_name + ")";
     }
     return header + ":\n" + trace;
 }
