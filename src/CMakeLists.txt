@@ -24,7 +24,9 @@ target_compile_definitions(librtdi PRIVATE LIBRTDI_BUILDING)
 # Optional: Boost.Stacktrace for registration call-stack capture
 # -----------------------------------------------------------------------
 if(LIBRTDI_ENABLE_STACKTRACE)
-    cmake_policy(SET CMP0167 OLD)
+    if(POLICY CMP0167)
+        cmake_policy(SET CMP0167 OLD)
+    endif()
     find_package(Boost 1.65 QUIET COMPONENTS stacktrace_backtrace)
     if(Boost_stacktrace_backtrace_FOUND)
         target_link_libraries(librtdi PRIVATE Boost::stacktrace_backtrace)
