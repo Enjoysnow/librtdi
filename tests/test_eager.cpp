@@ -208,3 +208,48 @@ TEST_CASE("eager_singletons with decorated singleton", "[eager][decorator]") {
     REQUIRE(g_factory_calls == 2);
     static_cast<void>(c);
 }
+
+TEST_CASE("eager_singletons keeps dependency alive until consumer teardown",
+          "[eager][destruction]") {
+    static std::vector<std::string> events;
+    events.clear();
+
+    struct IDependency {
+        virtual ~IDependency() = default;
+        virtual void ping() const = 0;
+    };
+
+    struct Dependency final : IDependency {
+        ~Dependency() override { events.push_back("dependency destroyed"); }
+        void ping() const override { events.push_back("dependency ping"); }
+    };
+
+    struct IConsumer {
+        virtual ~IConsumer() = default;
+    };
+
+    struct Consumer final : IConsumer {
+        explicit Consumer(IDependency& dep) : dep_(dep) {}
+        ~Consumer() override {
+            events.push_back("consumer destroying");
+            dep_.ping();
+            events.push_back("consumer destroyed");
+        }
+        IDependency& dep_;
+    };
+
+    {
+        librtdi::registry reg;
+        reg.add_singleton<IDependency, Dependency>();
+        reg.add_singleton<IConsumer, Consumer>(librtdi::deps<IDependency>);
+        auto r = reg.build({.validate_on_build = false, .eager_singletons = true});
+        static_cast<void>(r->get<IConsumer>());
+    }
+
+    REQUIRE(events == std::vector<std::string>{
+        "consumer destroying",
+        "dependency ping",
+        "consumer destroyed",
+        "dependency destroyed"
+    });
+}

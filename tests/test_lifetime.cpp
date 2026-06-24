@@ -124,3 +124,119 @@ TEST_CASE("singleton destruction order destroys consumer before dependency", "[l
                           "dependency destroyed",
                       });
 }
+
+TEST_CASE("singleton destruction order tears down chains from leaf to root",
+          "[lifetime][destruction]") {
+    static std::vector<std::string> events;
+    events.clear();
+
+    struct IC {
+        virtual ~IC() = default;
+        virtual void ping() const = 0;
+    };
+    struct IB {
+        virtual ~IB() = default;
+        virtual void ping() const = 0;
+    };
+    struct IA {
+        virtual ~IA() = default;
+    };
+
+    struct C final : IC {
+        ~C() override { events.push_back("C destroyed"); }
+        void ping() const override { events.push_back("C ping"); }
+    };
+
+    struct B final : IB {
+        explicit B(IC& c) : c_(c) {}
+        ~B() override {
+            events.push_back("B destroying");
+            c_.ping();
+            events.push_back("B destroyed");
+        }
+        void ping() const override { events.push_back("B ping"); }
+        IC& c_;
+    };
+
+    struct A final : IA {
+        explicit A(IB& b) : b_(b) {}
+        ~A() override {
+            events.push_back("A destroying");
+            b_.ping();
+            events.push_back("A destroyed");
+        }
+        IB& b_;
+    };
+
+    {
+        librtdi::registry reg;
+        reg.add_singleton<IC, C>();
+        reg.add_singleton<IB, B>(librtdi::deps<IC>);
+        reg.add_singleton<IA, A>(librtdi::deps<IB>);
+        auto r = reg.build({.validate_on_build = false});
+        static_cast<void>(r->get<IA>());
+    }
+
+    REQUIRE(events == std::vector<std::string>{
+        "A destroying",
+        "B ping",
+        "A destroyed",
+        "B destroying",
+        "C ping",
+        "B destroyed",
+        "C destroyed"
+    });
+}
+
+TEST_CASE("singleton destruction order tears down collection consumers first",
+          "[lifetime][destruction]") {
+    static std::vector<std::string> events;
+    events.clear();
+
+    struct IPlugin {
+        virtual ~IPlugin() = default;
+        virtual void ping() const = 0;
+    };
+
+    struct PluginA final : IPlugin {
+        ~PluginA() override { events.push_back("PluginA destroyed"); }
+        void ping() const override { events.push_back("PluginA ping"); }
+    };
+
+    struct PluginB final : IPlugin {
+        ~PluginB() override { events.push_back("PluginB destroyed"); }
+        void ping() const override { events.push_back("PluginB ping"); }
+    };
+
+    struct IHost {
+        virtual ~IHost() = default;
+    };
+
+    struct Host final : IHost {
+        explicit Host(std::vector<IPlugin*> plugins) : plugins_(std::move(plugins)) {}
+        ~Host() override {
+            events.push_back("Host destroying");
+            for (auto* plugin : plugins_) plugin->ping();
+            events.push_back("Host destroyed");
+        }
+        std::vector<IPlugin*> plugins_;
+    };
+
+    {
+        librtdi::registry reg;
+        reg.add_collection<IPlugin, PluginA>(librtdi::lifetime_kind::singleton);
+        reg.add_collection<IPlugin, PluginB>(librtdi::lifetime_kind::singleton);
+        reg.add_singleton<IHost, Host>(librtdi::deps<librtdi::collection<IPlugin>>);
+        auto r = reg.build({.validate_on_build = false});
+        static_cast<void>(r->get<IHost>());
+    }
+
+    REQUIRE(events == std::vector<std::string>{
+        "Host destroying",
+        "PluginA ping",
+        "PluginB ping",
+        "Host destroyed",
+        "PluginA destroyed",
+        "PluginB destroyed"
+    });
+}
