@@ -33,6 +33,7 @@ Testing/
 *.sln.docstates
 .vs/
 *.code-workspace
+.worktrees/
 
 # clangd / ccls
 .cache/
