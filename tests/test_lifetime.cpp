@@ -1,6 +1,9 @@
 #include <catch2/catch_test_macros.hpp>
 #include <librtdi.hpp>
 
+#include <string>
+#include <vector>
+
 namespace {
 
 struct ICounter {
@@ -74,4 +77,50 @@ TEST_CASE("same type supports singleton + transient independently", "[lifetime]"
     REQUIRE(&single != trans.get());
     REQUIRE(single.next() == 1);
     REQUIRE(trans->next() == 1);
+}
+
+TEST_CASE("singleton destruction order destroys consumer before dependency", "[lifetime][destruction]") {
+    static std::vector<std::string> events;
+    events.clear();
+
+    struct IDependency {
+        virtual ~IDependency() = default;
+        virtual void ping() const = 0;
+    };
+
+    struct Dependency : IDependency {
+        ~Dependency() override { events.push_back("dependency destroyed"); }
+        void ping() const override { events.push_back("dependency ping"); }
+    };
+
+    struct IConsumer {
+        virtual ~IConsumer() = default;
+    };
+
+    struct Consumer : IConsumer {
+        explicit Consumer(IDependency& dep) : dep_(dep) {}
+
+        ~Consumer() override {
+            events.push_back("consumer destroying");
+            dep_.ping();
+            events.push_back("consumer destroyed");
+        }
+
+        IDependency& dep_;
+    };
+
+    {
+        librtdi::registry reg;
+        reg.add_singleton<IDependency, Dependency>();
+        reg.add_singleton<IConsumer, Consumer>(librtdi::deps<IDependency>);
+        auto r = reg.build({.validate_on_build = false});
+        r->get<IConsumer>();
+    }
+
+    REQUIRE(events == std::vector<std::string>{
+                          "consumer destroying",
+                          "dependency ping",
+                          "consumer destroyed",
+                          "dependency destroyed",
+                      });
 }
