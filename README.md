@@ -86,6 +86,8 @@ int main() {
 | `singleton` | Global unique, created eagerly during `build()` by default | `get<T>()` returns `T&` |
 | `transient` | New instance on every resolve | `create<T>()` returns `unique_ptr<T>` |
 
+Singleton teardown is also lifecycle-aware: when a `resolver` is destroyed, created singleton consumers are torn down before the singleton dependencies they reference through `deps<>`. This applies to plain singleton slots, singleton collections, keyed singleton slots, forward-expanded singletons, and decorated singleton wrappers. In lazy mode, only singleton instances that were actually created participate in teardown.
+
 ### Four-Slot Model
 
 Each `(type, key)` pair can have up to 4 independent slots:
@@ -237,6 +239,8 @@ auto r = reg.build({
 ```
 
 When `eager_singletons` is `true` (default), all singleton factories are invoked during `build()`, so factory exceptions surface immediately and first-request latency is eliminated. Set to `false` for lazy initialization.
+
+Regardless of eager or lazy creation, singleton destruction is deterministic at `resolver` teardown time. The resolver computes a dependency-aware teardown order for created singleton instances and falls back to reverse creation order only for any remaining unsortable entries.
 
 Validation order: missing dependencies, then lifetime compatibility, then cycle detection, then eager singleton instantiation.
 

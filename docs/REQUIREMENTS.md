@@ -270,6 +270,17 @@ struct erased_ptr {
 - Singleton 实例由 `resolver` 内部的缓存（`erased_ptr`）持有，以 descriptor 索引为 key
 - Transient 实例不缓存，每次调用工厂创建新实例
 
+### 6.2.1 Singleton 销毁顺序
+
+- `resolver` 销毁时，singleton 缓存**不得**依赖底层关联容器的自然析构顺序；框架必须在 `resolver::impl` 内部显式执行 singleton teardown
+- 对于通过 `deps<>` 声明的 singleton 依赖图，销毁顺序遵循 **consumer 先于 dependency** 的规则：若 `A` 依赖 `B`，则 `A` 必须先析构，`B` 后析构
+- keyed singleton、singleton collection、forward singleton、decorated singleton 都属于该 teardown 机制的覆盖范围；其中 keyed 注册仅影响对应 keyed 槽位内的实例，不会与 non-keyed 槽位混用
+- 仅实际创建过的 singleton 会参与 teardown；lazy 模式下未被解析过的 singleton 不应在 `resolver` 销毁时被构造或析构
+- 对 singleton collection 依赖，consumer 必须先于该 collection 中所有已创建的 singleton 元素析构
+- 对共享依赖（多个 consumer 依赖同一 singleton）的分叉 DAG，所有 consumer 都必须在共享 dependency 之前析构
+- 当依赖图中存在不可安全排序的节点（如用户关闭校验后引入的 cycle，或同一 singleton 槽位出现歧义匹配）时，框架应保留可确定的 dependency-aware teardown 顺序，仅对剩余未排序节点使用 reverse-creation-order 作为稳定兜底
+- teardown 路径不得抛出异常；若排序分析失败，框架退回到仅处理剩余节点的 reverse-creation-order 清理
+
 ### 6.3 默认行为：Eager 实例化
 
 当 `build_options::eager_singletons == true`（默认）时，所有 singleton 实例在 `build()` 返回前即完成创建。
