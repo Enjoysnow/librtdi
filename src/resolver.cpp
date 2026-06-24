@@ -179,15 +179,24 @@ struct resolver::impl {
             return;
         }
 
+        std::vector<unsigned char> reset_in_dependency_pass(descriptors.size(), 0);
+
         try {
             for (auto idx : dependency_aware_teardown_order()) {
                 reset_singleton_entry(idx);
+                if (idx < reset_in_dependency_pass.size()) {
+                    reset_in_dependency_pass[idx] = 1;
+                }
             }
         } catch (...) {
             // Fall back to reverse creation order if graph analysis fails.
         }
 
         for (auto it = creation_order.rbegin(); it != creation_order.rend(); ++it) {
+            if (*it < reset_in_dependency_pass.size() && reset_in_dependency_pass[*it] != 0) {
+                continue;
+            }
+
             reset_singleton_entry(*it);
         }
 
