@@ -3,6 +3,7 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -252,4 +253,44 @@ TEST_CASE("eager_singletons keeps dependency alive until consumer teardown",
         "consumer destroyed",
         "dependency destroyed"
     });
+}
+
+TEST_CASE("lazy singleton teardown destroys only created singletons",
+          "[eager][destruction]") {
+    static int resolved_destructions = 0;
+    static int unresolved_destructions = 0;
+    resolved_destructions = 0;
+    unresolved_destructions = 0;
+
+    struct IResolved {
+        virtual ~IResolved() = default;
+    };
+
+    struct IUnresolved {
+        virtual ~IUnresolved() = default;
+    };
+
+    struct ResolvedSingleton final : IResolved {
+        ~ResolvedSingleton() override { ++resolved_destructions; }
+    };
+
+    struct UnresolvedSingleton final : IUnresolved {
+        ~UnresolvedSingleton() override { ++unresolved_destructions; }
+    };
+
+    {
+        librtdi::registry reg;
+        reg.add_singleton<IResolved, ResolvedSingleton>();
+        reg.add_singleton<IUnresolved, UnresolvedSingleton>();
+
+        auto r = reg.build({.validate_on_build = false,
+                            .eager_singletons = false});
+
+        static_cast<void>(r->get<IResolved>());
+        REQUIRE(resolved_destructions == 0);
+        REQUIRE(unresolved_destructions == 0);
+    }
+
+    REQUIRE(resolved_destructions == 1);
+    REQUIRE(unresolved_destructions == 0);
 }

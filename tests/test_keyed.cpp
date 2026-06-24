@@ -1,5 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 #include <librtdi.hpp>
+#include <vector>
 
 namespace {
 
@@ -129,4 +130,55 @@ TEST_CASE("keyed create throws not_found for wrong key", "[keyed]") {
     auto r = reg.build({.validate_on_build = false});
 
     REQUIRE_THROWS_AS(r->create<IService>("y"), librtdi::not_found);
+}
+
+TEST_CASE("keyed singleton destruction order destroys consumer before dependency",
+          "[keyed][destruction]") {
+    static std::vector<const char*> events;
+    events.clear();
+
+    struct IDependency {
+        virtual ~IDependency() = default;
+        virtual void ping() const = 0;
+    };
+
+    struct Dependency final : IDependency {
+        ~Dependency() override { events.push_back("dependency destroyed"); }
+        void ping() const override { events.push_back("dependency ping"); }
+    };
+
+    struct IConsumer {
+        virtual ~IConsumer() = default;
+    };
+
+    struct Consumer final : IConsumer {
+        void attach(IDependency& dependency) { dependency_ = &dependency; }
+
+        ~Consumer() override {
+            events.push_back("consumer destroying");
+            REQUIRE(dependency_ != nullptr);
+            dependency_->ping();
+            events.push_back("consumer destroyed");
+        }
+
+        IDependency* dependency_ = nullptr;
+    };
+
+    {
+        librtdi::registry reg;
+        reg.add_singleton<IDependency, Dependency>("dep");
+        reg.add_singleton<IConsumer, Consumer>("consumer");
+
+        auto r = reg.build({.validate_on_build = false});
+        auto& consumer = r->get<IConsumer>("consumer");
+        auto& dependency = r->get<IDependency>("dep");
+        static_cast<Consumer&>(consumer).attach(dependency);
+    }
+
+    REQUIRE(events == std::vector<const char*>{
+        "consumer destroying",
+        "dependency ping",
+        "consumer destroyed",
+        "dependency destroyed",
+    });
 }
