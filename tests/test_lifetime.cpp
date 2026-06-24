@@ -189,6 +189,83 @@ TEST_CASE("singleton destruction order tears down chains from leaf to root",
     });
 }
 
+TEST_CASE("singleton destruction order keeps shared dependencies alive for all consumers",
+          "[lifetime][destruction]") {
+    static std::vector<std::string> events;
+    events.clear();
+
+    struct IDependency {
+        virtual ~IDependency() = default;
+        virtual void ping(const char* caller) const = 0;
+    };
+
+    struct Dependency final : IDependency {
+        ~Dependency() override { events.push_back("dependency destroyed"); }
+        void ping(const char* caller) const override {
+            events.push_back(std::string(caller) + " ping");
+        }
+    };
+
+    struct IConsumerA {
+        virtual ~IConsumerA() = default;
+    };
+
+    struct IConsumerB {
+        virtual ~IConsumerB() = default;
+    };
+
+    struct ConsumerA final : IConsumerA {
+        explicit ConsumerA(IDependency& dependency) : dependency_(dependency) {}
+        ~ConsumerA() override {
+            events.push_back("A destroying");
+            dependency_.ping("A");
+            events.push_back("A destroyed");
+        }
+        IDependency& dependency_;
+    };
+
+    struct ConsumerB final : IConsumerB {
+        explicit ConsumerB(IDependency& dependency) : dependency_(dependency) {}
+        ~ConsumerB() override {
+            events.push_back("B destroying");
+            dependency_.ping("B");
+            events.push_back("B destroyed");
+        }
+        IDependency& dependency_;
+    };
+
+    {
+        librtdi::registry reg;
+        reg.add_singleton<IDependency, Dependency>();
+        reg.add_singleton<IConsumerA, ConsumerA>(librtdi::deps<IDependency>);
+        reg.add_singleton<IConsumerB, ConsumerB>(librtdi::deps<IDependency>);
+        auto r = reg.build({.validate_on_build = false});
+        static_cast<void>(r->get<IConsumerA>());
+        static_cast<void>(r->get<IConsumerB>());
+    }
+
+    const auto event_index = [&](const std::string& event) {
+        const auto it = std::find(events.begin(), events.end(), event);
+        REQUIRE(it != events.end());
+        return static_cast<std::size_t>(std::distance(events.begin(), it));
+    };
+
+    const auto a_destroying = event_index("A destroying");
+    const auto a_ping = event_index("A ping");
+    const auto a_destroyed = event_index("A destroyed");
+    const auto b_destroying = event_index("B destroying");
+    const auto b_ping = event_index("B ping");
+    const auto b_destroyed = event_index("B destroyed");
+    const auto dependency_destroyed = event_index("dependency destroyed");
+
+    REQUIRE(a_destroying < a_ping);
+    REQUIRE(a_ping < a_destroyed);
+    REQUIRE(b_destroying < b_ping);
+    REQUIRE(b_ping < b_destroyed);
+    REQUIRE(a_destroyed < dependency_destroyed);
+    REQUIRE(b_destroyed < dependency_destroyed);
+}
+
 TEST_CASE("singleton destruction order tears down collection consumers first",
           "[lifetime][destruction]") {
     static std::vector<std::string> events;

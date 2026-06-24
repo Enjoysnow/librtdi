@@ -2,6 +2,7 @@
 #include "librtdi/exceptions.hpp"
 #include "stacktrace_utils.hpp"
 
+#include <algorithm>
 #include <map>
 #include <mutex>
 #include <optional>
@@ -60,7 +61,7 @@ struct resolver::impl {
     }
 
     std::vector<std::size_t> singleton_dependencies_for(std::size_t idx,
-                                                         bool& inconsistent) const noexcept {
+                                                         bool& inconsistent) const {
         std::vector<std::size_t> deps;
         if (idx >= descriptors.size()) {
             inconsistent = true;
@@ -111,7 +112,7 @@ struct resolver::impl {
         return deps;
     }
 
-    std::vector<std::size_t> dependency_aware_teardown_order() const noexcept {
+    std::vector<std::size_t> dependency_aware_teardown_order() const {
         if (creation_order.empty()) {
             return {};
         }
@@ -141,39 +142,34 @@ struct resolver::impl {
             }
 
             state = 1;
-            order.push_back(idx);
 
             for (auto dep_idx : singleton_dependencies_for(idx, inconsistent)) {
                 visit(dep_idx);
             }
 
+            order.push_back(idx);
             state = 2;
         };
 
-        for (auto it = creation_order.rbegin(); it != creation_order.rend(); ++it) {
-            visit(*it);
+        for (auto idx : creation_order) {
+            visit(idx);
         }
 
         if (inconsistent) {
             return {};
         }
 
+        std::reverse(order.begin(), order.end());
         return order;
     }
 
-    void reset_singleton_entry(std::size_t idx,
-                               std::vector<unsigned char>& reset_state) noexcept {
-        if (idx >= reset_state.size() || reset_state[idx] != 0) {
-            return;
-        }
-
+    void reset_singleton_entry(std::size_t idx) noexcept {
         auto it = singletons.find(idx);
         if (it == singletons.end()) {
             return;
         }
 
         it->second.reset();
-        reset_state[idx] = 1;
     }
 
     void teardown_singletons() noexcept {
@@ -183,14 +179,16 @@ struct resolver::impl {
             return;
         }
 
-        std::vector<unsigned char> reset_state(descriptors.size(), 0);
-
-        for (auto idx : dependency_aware_teardown_order()) {
-            reset_singleton_entry(idx, reset_state);
+        try {
+            for (auto idx : dependency_aware_teardown_order()) {
+                reset_singleton_entry(idx);
+            }
+        } catch (...) {
+            // Fall back to reverse creation order if graph analysis fails.
         }
 
         for (auto it = creation_order.rbegin(); it != creation_order.rend(); ++it) {
-            reset_singleton_entry(*it, reset_state);
+            reset_singleton_entry(*it);
         }
 
         singletons.clear();
