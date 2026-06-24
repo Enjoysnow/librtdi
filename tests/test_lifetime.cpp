@@ -80,6 +80,33 @@ TEST_CASE("same type supports singleton + transient independently", "[lifetime]"
     REQUIRE(trans->next() == 1);
 }
 
+TEST_CASE("singleton created during resolution is destroyed exactly once",
+          "[lifetime][destruction]") {
+    static int destructions = 0;
+    destructions = 0;
+
+    struct ITracked {
+        virtual ~ITracked() = default;
+    };
+
+    struct Tracked final : ITracked {
+        ~Tracked() override { ++destructions; }
+    };
+
+    {
+        librtdi::registry reg;
+        reg.add_singleton<ITracked, Tracked>();
+        auto r = reg.build({.validate_on_build = false});
+
+        auto& a = r->get<ITracked>();
+        auto& b = r->get<ITracked>();
+        REQUIRE(&a == &b);
+        REQUIRE(destructions == 0);
+    }
+
+    REQUIRE(destructions == 1);
+}
+
 TEST_CASE("singleton destruction order destroys consumer before dependency", "[lifetime][destruction]") {
     static std::vector<std::string> events;
     events.clear();
