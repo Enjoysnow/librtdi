@@ -2,12 +2,15 @@
 #include "librtdi/exceptions.hpp"
 #include "stacktrace_utils.hpp"
 
+#include <algorithm>
 #include <map>
 #include <mutex>
+#include <optional>
 #include <unordered_map>
 #include <vector>
 #include <typeindex>
 #include <string>
+#include <functional>
 #include <utility>
 #include <tuple>
 
@@ -32,6 +35,7 @@ struct resolver::impl {
     // Singleton cache: descriptor index → erased_ptr
     std::recursive_mutex singleton_mutex;
     std::unordered_map<std::size_t, erased_ptr> singletons;
+    std::vector<std::size_t> creation_order;
 
     explicit impl(std::vector<descriptor> descs)
         : descriptors(std::move(descs))
@@ -43,6 +47,10 @@ struct resolver::impl {
         }
     }
 
+    ~impl() noexcept {
+        teardown_singletons();
+    }
+
     const std::vector<std::size_t>* find_slot(std::type_index type,
                                               const std::string& key,
                                               lifetime_kind lt,
@@ -50,6 +58,158 @@ struct resolver::impl {
         auto it = slot_to_indices.find(slot_key(type, key, lt, is_coll));
         if (it == slot_to_indices.end() || it->second.empty()) return nullptr;
         return &it->second;
+    }
+
+    std::vector<std::size_t> singleton_dependencies_for(std::size_t idx,
+                                                         bool& inconsistent) const {
+        std::vector<std::size_t> deps;
+        if (idx >= descriptors.size()) {
+            inconsistent = true;
+            return deps;
+        }
+
+        const auto& desc = descriptors[idx];
+        for (const auto& dep : desc.dependencies) {
+            if (dep.is_transient) {
+                continue;
+            }
+
+            const auto* dep_indices = find_slot(dep.type, std::string{},
+                                                lifetime_kind::singleton,
+                                                dep.is_collection);
+            if (!dep_indices) {
+                continue;
+            }
+
+            if (!dep.is_collection && dep_indices->size() != 1U) {
+                inconsistent = true;
+            }
+
+            for (auto dep_idx : *dep_indices) {
+                if (dep_idx == idx) {
+                    inconsistent = true;
+                    continue;
+                }
+
+                auto it = singletons.find(dep_idx);
+                if (it == singletons.end()) {
+                    continue;
+                }
+
+                bool seen = false;
+                for (auto existing : deps) {
+                    if (existing == dep_idx) {
+                        seen = true;
+                        break;
+                    }
+                }
+                if (!seen) {
+                    deps.push_back(dep_idx);
+                }
+            }
+        }
+
+        return deps;
+    }
+
+    std::vector<std::size_t> dependency_aware_teardown_order() const {
+        if (creation_order.empty()) {
+            return {};
+        }
+
+        std::vector<unsigned char> visit_state(descriptors.size(), 0);
+        std::vector<std::size_t> order;
+        order.reserve(creation_order.size());
+
+        std::function<bool(std::size_t)> visit = [&](std::size_t idx) {
+            if (idx >= visit_state.size()) {
+                return false;
+            }
+
+            if (singletons.find(idx) == singletons.end()) {
+                return true;
+            }
+
+            auto& state = visit_state[idx];
+            if (state == 2) {
+                return true;
+            }
+            if (state == 3) {
+                return false;
+            }
+            if (state == 1) {
+                state = 3;
+                return false;
+            }
+
+            state = 1;
+
+            bool inconsistent = false;
+            bool sortable = true;
+
+            for (auto dep_idx : singleton_dependencies_for(idx, inconsistent)) {
+                if (!visit(dep_idx)) {
+                    sortable = false;
+                }
+            }
+
+            if (inconsistent || !sortable) {
+                state = 3;
+                return false;
+            }
+
+            order.push_back(idx);
+            state = 2;
+            return true;
+        };
+
+        for (auto idx : creation_order) {
+            static_cast<void>(visit(idx));
+        }
+
+        std::reverse(order.begin(), order.end());
+        return order;
+    }
+
+    void reset_singleton_entry(std::size_t idx) noexcept {
+        auto it = singletons.find(idx);
+        if (it == singletons.end()) {
+            return;
+        }
+
+        it->second.reset();
+    }
+
+    void teardown_singletons() noexcept {
+        std::lock_guard lock(singleton_mutex);
+        if (singletons.empty()) {
+            creation_order.clear();
+            return;
+        }
+
+        std::vector<unsigned char> reset_in_dependency_pass(descriptors.size(), 0);
+
+        try {
+            for (auto idx : dependency_aware_teardown_order()) {
+                reset_singleton_entry(idx);
+                if (idx < reset_in_dependency_pass.size()) {
+                    reset_in_dependency_pass[idx] = 1;
+                }
+            }
+        } catch (...) {
+            // Fall back to reverse creation order if graph analysis fails.
+        }
+
+        for (auto it = creation_order.rbegin(); it != creation_order.rend(); ++it) {
+            if (*it < reset_in_dependency_pass.size() && reset_in_dependency_pass[*it] != 0) {
+                continue;
+            }
+
+            reset_singleton_entry(*it);
+        }
+
+        singletons.clear();
+        creation_order.clear();
     }
 };
 
@@ -112,9 +272,11 @@ void* resolver::resolve_singleton_by_index(std::size_t idx) {
         throw ex;
     }
 
-    void* raw = instance.get();
-    impl_->singletons.emplace(idx, std::move(instance));
-    return raw;
+    auto [created_it, inserted] = impl_->singletons.emplace(idx, std::move(instance));
+    if (inserted) {
+        impl_->creation_order.push_back(idx);
+    }
+    return created_it->second.get();
 }
 
 erased_ptr resolver::resolve_transient_by_index(std::size_t idx) {

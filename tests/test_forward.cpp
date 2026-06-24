@@ -2,6 +2,7 @@
 #include <librtdi.hpp>
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -174,6 +175,143 @@ TEST_CASE("forward singleton CAN be decorated via decorated_ptr", "[forward][dec
     auto& base = r->get<IBase>();
     REQUIRE(base.value() == 142);  // 42 + 100
     // No crash on resolver destruction (decorated_ptr does not double-free)
+}
+
+TEST_CASE("forward singleton teardown resets decorated interface before target",
+          "[forward][decorator][destruction]") {
+    static std::vector<std::string> events;
+    events.clear();
+
+    struct IBase2 {
+        virtual ~IBase2() = default;
+        virtual void ping() const = 0;
+    };
+
+    struct IDerived2 : IBase2 {};
+
+    struct Impl2 final : IDerived2 {
+        ~Impl2() override { events.push_back("impl destroyed"); }
+        void ping() const override { events.push_back("impl ping"); }
+    };
+
+    struct BaseDecorator2 final : IBase2 {
+        explicit BaseDecorator2(librtdi::decorated_ptr<IBase2> inner)
+            : inner_(std::move(inner)) {}
+        ~BaseDecorator2() override {
+            events.push_back("decorator destroying");
+            inner_->ping();
+            events.push_back("decorator destroyed");
+        }
+        void ping() const override { inner_->ping(); }
+        librtdi::decorated_ptr<IBase2> inner_;
+    };
+
+    {
+        librtdi::registry reg;
+        reg.add_singleton<IDerived2, Impl2>();
+        reg.forward<IBase2, IDerived2>();
+        reg.decorate<IBase2, BaseDecorator2>();
+        auto r = reg.build({.validate_on_build = false});
+        static_cast<void>(r->get<IBase2>());
+    }
+
+    REQUIRE(events == std::vector<std::string>{
+        "decorator destroying",
+        "impl ping",
+        "decorator destroyed",
+        "impl destroyed"
+    });
+}
+
+TEST_CASE("forward singleton teardown keeps shared target alive for both interfaces",
+          "[forward][destruction]") {
+    static std::vector<std::string> events;
+    events.clear();
+
+    struct IBase2 {
+        virtual ~IBase2() = default;
+        virtual void ping_base() const = 0;
+    };
+
+    struct IAudit2 {
+        virtual ~IAudit2() = default;
+        virtual void ping_audit() const = 0;
+    };
+
+    struct IDerived2 : IBase2, IAudit2 {};
+
+    struct Impl2 final : IDerived2 {
+        ~Impl2() override { events.push_back("impl destroyed"); }
+        void ping_base() const override { events.push_back("base ping"); }
+        void ping_audit() const override { events.push_back("audit ping"); }
+    };
+
+    struct IBaseConsumer {
+        virtual ~IBaseConsumer() = default;
+    };
+
+    struct BaseConsumer final : IBaseConsumer {
+        explicit BaseConsumer(IBase2& forwarded) : forwarded_(forwarded) {}
+        ~BaseConsumer() override {
+            events.push_back("base consumer destroying");
+            forwarded_.ping_base();
+            events.push_back("base consumer destroyed");
+        }
+        IBase2& forwarded_;
+    };
+
+    struct IAuditConsumer {
+        virtual ~IAuditConsumer() = default;
+    };
+
+    struct AuditConsumer final : IAuditConsumer {
+        explicit AuditConsumer(IAudit2& forwarded) : forwarded_(forwarded) {}
+        ~AuditConsumer() override {
+            events.push_back("audit consumer destroying");
+            forwarded_.ping_audit();
+            events.push_back("audit consumer destroyed");
+        }
+        IAudit2& forwarded_;
+    };
+
+    {
+        librtdi::registry reg;
+        reg.add_singleton<IDerived2, Impl2>();
+        reg.forward<IBase2, IDerived2>();
+        reg.forward<IAudit2, IDerived2>();
+        reg.add_singleton<IBaseConsumer, BaseConsumer>(librtdi::deps<IBase2>);
+        reg.add_singleton<IAuditConsumer, AuditConsumer>(librtdi::deps<IAudit2>);
+        auto r = reg.build({.validate_on_build = false});
+        static_cast<void>(r->get<IBaseConsumer>());
+        static_cast<void>(r->get<IAuditConsumer>());
+    }
+
+    const auto event_index = [&](const std::string& event) {
+        for (std::size_t i = 0; i < events.size(); ++i) {
+            if (events[i] == event) {
+                return i;
+            }
+        }
+
+        INFO("missing event: " << event);
+        REQUIRE(false);
+        return events.size();
+    };
+
+    const auto base_destroying = event_index("base consumer destroying");
+    const auto base_ping = event_index("base ping");
+    const auto base_destroyed = event_index("base consumer destroyed");
+    const auto audit_destroying = event_index("audit consumer destroying");
+    const auto audit_ping = event_index("audit ping");
+    const auto audit_destroyed = event_index("audit consumer destroyed");
+    const auto impl_destroyed = event_index("impl destroyed");
+
+    REQUIRE(base_destroying < base_ping);
+    REQUIRE(base_ping < base_destroyed);
+    REQUIRE(base_destroyed < impl_destroyed);
+    REQUIRE(audit_destroying < audit_ping);
+    REQUIRE(audit_ping < audit_destroyed);
+    REQUIRE(audit_destroyed < impl_destroyed);
 }
 
 TEST_CASE("forward transient CAN be decorated", "[forward][decorator]") {

@@ -3,6 +3,7 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -207,4 +208,89 @@ TEST_CASE("eager_singletons with decorated singleton", "[eager][decorator]") {
     auto& c = r->get<ICounter>();
     REQUIRE(g_factory_calls == 2);
     static_cast<void>(c);
+}
+
+TEST_CASE("eager_singletons keeps dependency alive until consumer teardown",
+          "[eager][destruction]") {
+    static std::vector<std::string> events;
+    events.clear();
+
+    struct IDependency {
+        virtual ~IDependency() = default;
+        virtual void ping() const = 0;
+    };
+
+    struct Dependency final : IDependency {
+        ~Dependency() override { events.push_back("dependency destroyed"); }
+        void ping() const override { events.push_back("dependency ping"); }
+    };
+
+    struct IConsumer {
+        virtual ~IConsumer() = default;
+    };
+
+    struct Consumer final : IConsumer {
+        explicit Consumer(IDependency& dep) : dep_(dep) {}
+        ~Consumer() override {
+            events.push_back("consumer destroying");
+            dep_.ping();
+            events.push_back("consumer destroyed");
+        }
+        IDependency& dep_;
+    };
+
+    {
+        librtdi::registry reg;
+        reg.add_singleton<IDependency, Dependency>();
+        reg.add_singleton<IConsumer, Consumer>(librtdi::deps<IDependency>);
+        auto r = reg.build({.validate_on_build = false, .eager_singletons = true});
+        static_cast<void>(r->get<IConsumer>());
+    }
+
+    REQUIRE(events == std::vector<std::string>{
+        "consumer destroying",
+        "dependency ping",
+        "consumer destroyed",
+        "dependency destroyed"
+    });
+}
+
+TEST_CASE("lazy singleton teardown destroys only created singletons",
+          "[eager][destruction]") {
+    static int resolved_destructions = 0;
+    static int unresolved_destructions = 0;
+    resolved_destructions = 0;
+    unresolved_destructions = 0;
+
+    struct IResolved {
+        virtual ~IResolved() = default;
+    };
+
+    struct IUnresolved {
+        virtual ~IUnresolved() = default;
+    };
+
+    struct ResolvedSingleton final : IResolved {
+        ~ResolvedSingleton() override { ++resolved_destructions; }
+    };
+
+    struct UnresolvedSingleton final : IUnresolved {
+        ~UnresolvedSingleton() override { ++unresolved_destructions; }
+    };
+
+    {
+        librtdi::registry reg;
+        reg.add_singleton<IResolved, ResolvedSingleton>();
+        reg.add_singleton<IUnresolved, UnresolvedSingleton>();
+
+        auto r = reg.build({.validate_on_build = false,
+                            .eager_singletons = false});
+
+        static_cast<void>(r->get<IResolved>());
+        REQUIRE(resolved_destructions == 0);
+        REQUIRE(unresolved_destructions == 0);
+    }
+
+    REQUIRE(resolved_destructions == 1);
+    REQUIRE(unresolved_destructions == 0);
 }
