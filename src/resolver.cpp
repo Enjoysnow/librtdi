@@ -4,10 +4,12 @@
 
 #include <map>
 #include <mutex>
+#include <optional>
 #include <unordered_map>
 #include <vector>
 #include <typeindex>
 #include <string>
+#include <functional>
 #include <utility>
 #include <tuple>
 
@@ -44,6 +46,10 @@ struct resolver::impl {
         }
     }
 
+    ~impl() noexcept {
+        teardown_singletons();
+    }
+
     const std::vector<std::size_t>* find_slot(std::type_index type,
                                               const std::string& key,
                                               lifetime_kind lt,
@@ -51,6 +57,144 @@ struct resolver::impl {
         auto it = slot_to_indices.find(slot_key(type, key, lt, is_coll));
         if (it == slot_to_indices.end() || it->second.empty()) return nullptr;
         return &it->second;
+    }
+
+    std::vector<std::size_t> singleton_dependencies_for(std::size_t idx,
+                                                         bool& inconsistent) const noexcept {
+        std::vector<std::size_t> deps;
+        if (idx >= descriptors.size()) {
+            inconsistent = true;
+            return deps;
+        }
+
+        const auto& desc = descriptors[idx];
+        for (const auto& dep : desc.dependencies) {
+            if (dep.is_transient) {
+                continue;
+            }
+
+            const auto* dep_indices = find_slot(dep.type, std::string{},
+                                                lifetime_kind::singleton,
+                                                dep.is_collection);
+            if (!dep_indices) {
+                continue;
+            }
+
+            if (!dep.is_collection && dep_indices->size() != 1U) {
+                inconsistent = true;
+            }
+
+            for (auto dep_idx : *dep_indices) {
+                if (dep_idx == idx) {
+                    inconsistent = true;
+                    continue;
+                }
+
+                auto it = singletons.find(dep_idx);
+                if (it == singletons.end()) {
+                    continue;
+                }
+
+                bool seen = false;
+                for (auto existing : deps) {
+                    if (existing == dep_idx) {
+                        seen = true;
+                        break;
+                    }
+                }
+                if (!seen) {
+                    deps.push_back(dep_idx);
+                }
+            }
+        }
+
+        return deps;
+    }
+
+    std::vector<std::size_t> dependency_aware_teardown_order() const noexcept {
+        if (creation_order.empty()) {
+            return {};
+        }
+
+        std::vector<unsigned char> visit_state(descriptors.size(), 0);
+        std::vector<std::size_t> order;
+        order.reserve(creation_order.size());
+
+        bool inconsistent = false;
+        std::function<void(std::size_t)> visit = [&](std::size_t idx) {
+            if (idx >= visit_state.size()) {
+                inconsistent = true;
+                return;
+            }
+
+            if (singletons.find(idx) == singletons.end()) {
+                return;
+            }
+
+            auto& state = visit_state[idx];
+            if (state == 2) {
+                return;
+            }
+            if (state == 1) {
+                inconsistent = true;
+                return;
+            }
+
+            state = 1;
+            order.push_back(idx);
+
+            for (auto dep_idx : singleton_dependencies_for(idx, inconsistent)) {
+                visit(dep_idx);
+            }
+
+            state = 2;
+        };
+
+        for (auto it = creation_order.rbegin(); it != creation_order.rend(); ++it) {
+            visit(*it);
+        }
+
+        if (inconsistent) {
+            return {};
+        }
+
+        return order;
+    }
+
+    void reset_singleton_entry(std::size_t idx,
+                               std::vector<unsigned char>& reset_state) noexcept {
+        if (idx >= reset_state.size() || reset_state[idx] != 0) {
+            return;
+        }
+
+        auto it = singletons.find(idx);
+        if (it == singletons.end()) {
+            return;
+        }
+
+        it->second.reset();
+        reset_state[idx] = 1;
+    }
+
+    void teardown_singletons() noexcept {
+        std::lock_guard lock(singleton_mutex);
+        if (singletons.empty()) {
+            creation_order.clear();
+            return;
+        }
+
+        std::vector<unsigned char> reset_state(descriptors.size(), 0);
+
+        for (auto idx : dependency_aware_teardown_order()) {
+            reset_singleton_entry(idx, reset_state);
+        }
+
+        for (auto it = creation_order.rbegin(); it != creation_order.rend(); ++it) {
+            reset_singleton_entry(*it, reset_state);
+        }
+
+        singletons.clear();
+        creation_order.clear();
     }
 };
 
