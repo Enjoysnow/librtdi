@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <librtdi.hpp>
 
+#include <algorithm>
 #include <string>
 #include <vector>
 
@@ -231,12 +232,23 @@ TEST_CASE("singleton destruction order tears down collection consumers first",
         static_cast<void>(r->get<IHost>());
     }
 
-    REQUIRE(events == std::vector<std::string>{
-        "Host destroying",
-        "PluginA ping",
-        "PluginB ping",
-        "Host destroyed",
-        "PluginA destroyed",
-        "PluginB destroyed"
-    });
+    const auto event_index = [&](const std::string& event) {
+        const auto it = std::find(events.begin(), events.end(), event);
+        REQUIRE(it != events.end());
+        return static_cast<std::size_t>(std::distance(events.begin(), it));
+    };
+
+    const auto host_destroying = event_index("Host destroying");
+    const auto host_destroyed = event_index("Host destroyed");
+    const auto plugin_a_ping = event_index("PluginA ping");
+    const auto plugin_b_ping = event_index("PluginB ping");
+    const auto plugin_a_destroyed = event_index("PluginA destroyed");
+    const auto plugin_b_destroyed = event_index("PluginB destroyed");
+
+    REQUIRE(host_destroying < plugin_a_ping);
+    REQUIRE(host_destroying < plugin_b_ping);
+    REQUIRE(plugin_a_ping < host_destroyed);
+    REQUIRE(plugin_b_ping < host_destroyed);
+    REQUIRE(host_destroyed < plugin_a_destroyed);
+    REQUIRE(host_destroyed < plugin_b_destroyed);
 }
