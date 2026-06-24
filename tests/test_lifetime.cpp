@@ -356,3 +356,64 @@ TEST_CASE("singleton destruction order tears down collection consumers first",
     REQUIRE(host_destroyed < plugin_a_destroyed);
     REQUIRE(host_destroyed < plugin_b_destroyed);
 }
+
+TEST_CASE("singleton teardown fallback destroys each created instance once",
+          "[lifetime][destruction]") {
+    static int base_destructions = 0;
+    static int derived_destructions = 0;
+    static int consumer_destructions = 0;
+
+    base_destructions = 0;
+    derived_destructions = 0;
+    consumer_destructions = 0;
+
+    struct IBase {
+        virtual ~IBase() = default;
+    };
+
+    struct ExplicitBase final : IBase {
+        ~ExplicitBase() override { ++base_destructions; }
+    };
+
+    struct IDerived : IBase {
+        virtual ~IDerived() = default;
+    };
+
+    struct Derived final : IDerived {
+        ~Derived() override { ++derived_destructions; }
+    };
+
+    struct IConsumer {
+        virtual ~IConsumer() = default;
+    };
+
+    struct Consumer final : IConsumer {
+        explicit Consumer(IBase& base) : base_(base) {}
+        ~Consumer() override {
+            static_cast<void>(base_);
+            ++consumer_destructions;
+        }
+
+        IBase& base_;
+    };
+
+    {
+        librtdi::registry reg;
+        reg.add_singleton<IBase, ExplicitBase>();
+        reg.add_singleton<IDerived, Derived>();
+        reg.forward<IBase, IDerived>();
+        reg.add_singleton<IConsumer, Consumer>(librtdi::deps<IBase>);
+
+        auto r = reg.build({.validate_on_build = false});
+        static_cast<void>(r->get<IConsumer>());
+        static_cast<void>(r->get<IDerived>());
+
+        REQUIRE(base_destructions == 0);
+        REQUIRE(derived_destructions == 0);
+        REQUIRE(consumer_destructions == 0);
+    }
+
+    REQUIRE(base_destructions == 1);
+    REQUIRE(derived_destructions == 1);
+    REQUIRE(consumer_destructions == 1);
+}

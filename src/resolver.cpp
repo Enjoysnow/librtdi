@@ -121,42 +121,50 @@ struct resolver::impl {
         std::vector<std::size_t> order;
         order.reserve(creation_order.size());
 
-        bool inconsistent = false;
-        std::function<void(std::size_t)> visit = [&](std::size_t idx) {
+        std::function<bool(std::size_t)> visit = [&](std::size_t idx) {
             if (idx >= visit_state.size()) {
-                inconsistent = true;
-                return;
+                return false;
             }
 
             if (singletons.find(idx) == singletons.end()) {
-                return;
+                return true;
             }
 
             auto& state = visit_state[idx];
             if (state == 2) {
-                return;
+                return true;
+            }
+            if (state == 3) {
+                return false;
             }
             if (state == 1) {
-                inconsistent = true;
-                return;
+                state = 3;
+                return false;
             }
 
             state = 1;
 
+            bool inconsistent = false;
+            bool sortable = true;
+
             for (auto dep_idx : singleton_dependencies_for(idx, inconsistent)) {
-                visit(dep_idx);
+                if (!visit(dep_idx)) {
+                    sortable = false;
+                }
+            }
+
+            if (inconsistent || !sortable) {
+                state = 3;
+                return false;
             }
 
             order.push_back(idx);
             state = 2;
+            return true;
         };
 
         for (auto idx : creation_order) {
-            visit(idx);
-        }
-
-        if (inconsistent) {
-            return {};
+            static_cast<void>(visit(idx));
         }
 
         std::reverse(order.begin(), order.end());
