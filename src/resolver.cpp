@@ -32,6 +32,7 @@ struct resolver::impl {
     // Singleton cache: descriptor index → erased_ptr
     std::recursive_mutex singleton_mutex;
     std::unordered_map<std::size_t, erased_ptr> singletons;
+    std::vector<std::size_t> creation_order;
 
     explicit impl(std::vector<descriptor> descs)
         : descriptors(std::move(descs))
@@ -112,9 +113,11 @@ void* resolver::resolve_singleton_by_index(std::size_t idx) {
         throw ex;
     }
 
-    void* raw = instance.get();
-    impl_->singletons.emplace(idx, std::move(instance));
-    return raw;
+    auto [created_it, inserted] = impl_->singletons.emplace(idx, std::move(instance));
+    if (inserted) {
+        impl_->creation_order.push_back(idx);
+    }
+    return created_it->second.get();
 }
 
 erased_ptr resolver::resolve_transient_by_index(std::size_t idx) {
